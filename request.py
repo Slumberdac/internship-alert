@@ -74,17 +74,15 @@ async def on_ready():
     channel = discord_client.get_channel(int(os.environ["DISCORD_CHANNEL_ID"]))
 
     lock = asyncio.Lock()
-    backoff = 1
 
     async def background_checker():
-        nonlocal backoff
         while True:
             try:
-                # make sure only one fetch runs at a time and run blocking work in a thread
+                # initial fetch (run blocking work in a thread)
                 async with lock:
                     postes = await asyncio.to_thread(fetch_postes)
 
-                # send any new posts (fetch_postes returns already-reviewed dicts)
+                # send any new posts
                 for poste in postes or []:
                     if not poste:
                         continue
@@ -93,19 +91,50 @@ async def on_ready():
                         view=Buttons(guid_string=poste["GuidString"]),
                     )
 
-                # If a cookie refresh was triggered, perform it in a thread and back off longer
+                sleep_time = MIN_INTERVAL
+
+                # If a cookie refresh was triggered, ensure we haven't refreshed too recently,
+                # run the heavy UI automation in a thread, and immediately re-run fetch_postes.
                 if globals().get("COOKIE_REFRESHED"):
-                    globals()["COOKIE_REFRESHED"] = False
-                    # run the heavy UI automation in a thread
-                    await asyncio.to_thread(refresh_cookie)
-                    backoff = MAX_BACKOFF
-                else:
-                    backoff = 1
+                    now = time.time()
+                    last = globals().get("COOKIE_LAST_REFRESH", 0.0)
+                    if now - last > REFRESH_COOLDOWN:
+                        try:
+                            # mark refresh-in-progress to avoid duplicate concurrent refreshes
+                            globals()["COOKIE_REFRESHED"] = False
+                            globals()["COOKIE_LAST_REFRESH"] = now
+
+                            # do the UI automation in a background thread
+                            await asyncio.to_thread(refresh_cookie)
+                            globals()["COOKIE_LAST_REFRESH"] = time.time()
+
+                            # immediately re-fetch under lock so we don't delay processing
+                            async with lock:
+                                postes_after = await asyncio.to_thread(fetch_postes)
+
+                            for poste in postes_after or []:
+                                if not poste:
+                                    continue
+                                await channel.send(
+                                    f'# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n### Analysis\n{poste["analysis"]}',
+                                    view=Buttons(guid_string=poste["GuidString"]),
+                                )
+
+                            # after a refresh and immediate fetch, wait a bit longer to avoid thrashing
+                            sleep_time = MIN_INTERVAL * MAX_BACKOFF
+                        except Exception as e:
+                            print("refresh_cookie failed:", e)
+                            # if refresh failed, keep COOKIE_REFRESHED True so we can retry later
+                            globals()["COOKIE_REFRESHED"] = True
+                            sleep_time = MIN_INTERVAL
+                    else:
+                        # Too soon to attempt another refresh; wait normally
+                        sleep_time = MIN_INTERVAL
 
             except Exception as e:
                 print("Error in background_checker:", e)
+                sleep_time = MIN_INTERVAL
 
-            sleep_time = MIN_INTERVAL * backoff
             await asyncio.sleep(sleep_time)
 
     asyncio.create_task(background_checker())
@@ -381,7 +410,7 @@ def review(poste: dict):
             messages=[
                 {
                     "role": "system",
-                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (3-4 sentences) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 85% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
+                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 85% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
                 },
                 {
                     "role": "user",
@@ -419,7 +448,7 @@ def review(poste: dict):
                     {
                         "role": "user",
                         "content": (
-                            "Summarize the following job posting in 3-4 concise sentences highlighting the key responsibilities and requirements:\n\n"  # pylint: disable=line-too-long
+                            "Summarize the following job posting in 3-4 concise sentences (<600 char) highlighting the key responsibilities and requirements:\n\n"  # pylint: disable=line-too-long
                             + description_div.get_text(separator="\n")
                         ),
                     },
