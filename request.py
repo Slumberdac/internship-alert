@@ -8,6 +8,8 @@ import os
 import subprocess
 import textwrap
 from time import sleep
+import asyncio
+import time
 
 import discord
 import pandas as pd
@@ -44,13 +46,22 @@ class Buttons(discord.ui.View):
         button.disabled = True
         await interaction.response.edit_message(view=self)
 
-        apply(self.guid_string)
+        # run blocking apply() in a thread so it doesn't block the event loop
+        await asyncio.to_thread(apply, self.guid_string)
 
 
 URL = "https://see.etsmtl.ca/Postes/Rechercher"
 
 payload = {}
 headers = {"Cookie": os.environ["COOKIE"]}
+
+COOKIE_REFRESHED = False
+COOKIE_INVALID_AT = 0.0
+COOKIE_LAST_REFRESH = 0.0
+COOKIE_LIFETIME = 5 * 3600  # 5 hours
+REFRESH_COOLDOWN = 60 * 2  # don't retry refresh more than once every 2 minutes
+MIN_INTERVAL = 60 * 10  # 10 minutes
+MAX_BACKOFF = 6
 
 
 @discord_client.event
@@ -60,26 +71,44 @@ async def on_ready():
     Periodically fetches new job postings and sends them to a specified Discord channel.
     """
     await discord_client.wait_until_ready()
-    channel = discord_client.get_channel(os.environ["DISCORD_CHANNEL_ID"])
-    while True:
-        for poste in fetch_postes():
-            print(f"Found new poste:")
-            if not poste:
-                continue
-            await channel.send(
-                f"# New offer\n## {poste["Titpost"]}\n\n### Description\n{poste["summary"]}\n\n### Analysis\n{poste["analysis"]}"
-                # textwrap.dedent(
-                #     f"""# New offer
-                # ## {poste["Titpost"]}
-                # ### Description
-                # {poste["summary"]}
-                # ### Analysis
-                # {poste["analysis"]}"""
-                ,
-                view=Buttons(guid_string=poste["GuidString"]),
-            )
-        print("Done checking for new postes.")
-        sleep(60 * 10)  # Wait 10 minutes before checking again
+    channel = discord_client.get_channel(int(os.environ["DISCORD_CHANNEL_ID"]))
+
+    lock = asyncio.Lock()
+    backoff = 1
+
+    async def background_checker():
+        nonlocal backoff
+        while True:
+            try:
+                # make sure only one fetch runs at a time and run blocking work in a thread
+                async with lock:
+                    postes = await asyncio.to_thread(fetch_postes)
+
+                # send any new posts (fetch_postes returns already-reviewed dicts)
+                for poste in postes or []:
+                    if not poste:
+                        continue
+                    await channel.send(
+                        f'# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n### Analysis\n{poste["analysis"]}',
+                        view=Buttons(guid_string=poste["GuidString"]),
+                    )
+
+                # If a cookie refresh was triggered, perform it in a thread and back off longer
+                if globals().get("COOKIE_REFRESHED"):
+                    globals()["COOKIE_REFRESHED"] = False
+                    # run the heavy UI automation in a thread
+                    await asyncio.to_thread(refresh_cookie)
+                    backoff = MAX_BACKOFF
+                else:
+                    backoff = 1
+
+            except Exception as e:
+                print("Error in background_checker:", e)
+
+            sleep_time = MIN_INTERVAL * backoff
+            await asyncio.sleep(sleep_time)
+
+    asyncio.create_task(background_checker())
 
 
 def fetch_postes():
@@ -99,8 +128,10 @@ def fetch_postes():
         )
         if request.status_code != 200:
             print("COOKIE EXPIRED")
-            refresh_cookie()
-            return fetch_postes()
+            # signal that a cookie refresh is needed, avoid doing UI automation on the event loop
+            globals()["COOKIE_REFRESHED"] = True
+            globals()["COOKIE_INVALID_AT"] = time.time()
+            return None
     except requests.Timeout:
         print("Request timed out")
         return None
@@ -350,7 +381,7 @@ def review(poste: dict):
             messages=[
                 {
                     "role": "system",
-                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 85% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
+                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (3-4 sentences) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 85% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
                 },
                 {
                     "role": "user",
@@ -388,7 +419,7 @@ def review(poste: dict):
                     {
                         "role": "user",
                         "content": (
-                            "Summarize the following job posting in 4-5 concise sentences highlighting the key responsibilities and requirements:\n\n"  # pylint: disable=line-too-long
+                            "Summarize the following job posting in 3-4 concise sentences highlighting the key responsibilities and requirements:\n\n"  # pylint: disable=line-too-long
                             + description_div.get_text(separator="\n")
                         ),
                     },
