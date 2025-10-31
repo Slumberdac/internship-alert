@@ -191,23 +191,23 @@ def fetch_postes():
 
 def apply(guid: str):
     """Apply to a job posting given its GUID."""
-    print(f"Applying to job with GUID: {guid}")
-    # try:
-    #     request = requests.post(
-    #         "https://see.etsmtl.ca/Postulation/Postuler",
-    #         headers=headers,
-    #         payload={"Postulant.Poste.Guid": guid, "password": os.environ["PASSWORD"]},
-    #         timeout=10,
-    #         accept_redirects=False,
-    #     )
-    #     if request.status_code == 403:
-    #         print("ALREADY APPLIED OR EXTERNAL SITE")
-    #     elif request.status_code != 200:
-    #         print("COOKIE EXPIRED")
-    #         refresh_cookie()
-    #         return apply(guid)
-    # except requests.Timeout:
-    #     print("Request timed out")
+    # print(f"Applying to job with GUID: {guid}")
+    try:
+        request = requests.post(
+            "https://see.etsmtl.ca/Postulation/Postuler",
+            headers=headers,
+            payload={"Postulant.Poste.Guid": guid, "password": os.environ["PASSWORD"]},
+            timeout=10,
+            accept_redirects=False,
+        )
+        if request.status_code == 403:
+            print("ALREADY APPLIED OR EXTERNAL SITE")
+        elif request.status_code != 200:
+            print("COOKIE EXPIRED")
+            refresh_cookie()
+            return apply(guid)
+    except requests.Timeout:
+        print("Request timed out")
 
 
 def refresh_cookie():

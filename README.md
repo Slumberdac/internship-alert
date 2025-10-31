@@ -36,6 +36,12 @@ stage_alert
 3. Set up your environment variables by copying `.env.example` to `.env` and filling in the required values.
 
 ## Usage
+Ensure you have ydotool installed and the daemon is running
+```
+sudo apt install ydotool
+ydotoold
+```
+
 To run the bot, execute the following command:
 ```
 pipenv run python bot.py
