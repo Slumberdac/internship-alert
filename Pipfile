@@ -12,6 +12,7 @@ beautifulsoup4 = "*"
 pyperclip = "*"
 openai = "*"
 aiohttp = "*"
+datetime = "*"
 
 [dev-packages]
 isort = "*"

@@ -8,6 +8,7 @@ import os
 import subprocess
 import textwrap
 from time import sleep
+from datetime import datetime
 import asyncio
 import time
 
@@ -120,8 +121,7 @@ async def on_ready():
                                     view=Buttons(guid_string=poste["GuidString"]),
                                 )
 
-                            # after a refresh and immediate fetch, wait a bit longer to avoid thrashing
-                            sleep_time = MIN_INTERVAL * MAX_BACKOFF
+                            sleep_time = MIN_INTERVAL
                         except Exception as e:
                             print("refresh_cookie failed:", e)
                             # if refresh failed, keep COOKIE_REFRESHED True so we can retry later
@@ -146,6 +146,7 @@ def fetch_postes():
     Returns a list of new job postings that have not been seen before.
     Each posting is reviewed for fit using GPT-5-nano.
     """
+    print(f"{datetime.now()} Fetching job postings...")
     try:
         request = requests.request(
             "GET",
@@ -186,7 +187,7 @@ def fetch_postes():
             df_combined = df_new
         df_combined.to_csv("postes.csv", index=False)
 
-    return [review(poste) for poste in new_postes[:1]]
+    return [review(poste) for poste in new_postes]
 
 
 def apply(guid: str):
@@ -418,7 +419,7 @@ def review(poste: dict):
                         "Here is the CV to remember for future job applications:\n\n"
                         + os.environ["CV_JSON"]
                         + "\n\n"
-                        + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache."  # pylint: disable=line-too-long
+                        + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache. He does not have means of travel to the rive-sud of quebec so cities like boucherville arre out of his reach."  # pylint: disable=line-too-long
                     ),
                 },
                 {
@@ -436,6 +437,7 @@ def review(poste: dict):
     )
 
     if gpt_response["fit"]:
+        print(f"Good fit found: {poste['Titpost']}")
         # Summary of offer to send to discord for final review
         summary = (
             gpt_client.chat.completions.create(
@@ -464,6 +466,7 @@ def review(poste: dict):
             "analysis": gpt_response["analysis"],
             "summary": summary,
         }
+    print(f"Not a good fit: {poste['Titpost']}")
     return None
 
 
