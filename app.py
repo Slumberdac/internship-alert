@@ -133,7 +133,7 @@ async def on_ready():
                                 if not poste:
                                     continue
                                 await channel.send(
-                                    f'{f"<@{os.environ["DISCORD_ROLE_ID"]}>" if os.environ.get("DISCORD_ROLE_ID") else ''}# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}{'\n\n### Analysis\n{poste["analysis"]}' if os.environ.get("CV_JSON") else ''}',
+                                    f'{f"<@{os.environ["DISCORD_ROLE_ID"]}>" if os.environ.get("DISCORD_ROLE_ID") else ''}# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{'### Analysis\n{poste["analysis"]}' if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste['GuidString']}"}',
                                     view=(
                                         Buttons(guid_string=poste["GuidString"])
                                         if os.environ.get("CV_JSON")
