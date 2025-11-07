@@ -205,7 +205,7 @@ def fetch_postes():
             df_combined = pd.concat([df_known, df_new], ignore_index=True)
         else:
             df_combined = df_new
-        # df_combined.to_csv(POSTES_PATH, index=False)
+        df_combined.to_csv(POSTES_PATH, index=False)
     return [review(poste) for poste in new_postes]
 
 
