@@ -89,7 +89,7 @@ async def on_ready():
     """
     await discord_client.wait_until_ready()
     channel = discord_client.get_channel(int(os.environ["DISCORD_CHANNEL_ID"]))
-
+    await channel.send("HELLO WORLD")
     lock = asyncio.Lock()
 
     async def background_checker():
