@@ -6,18 +6,19 @@ Uses Discord for notifications and OpenAI's GPT-5-nano for job fit analysis.
 import json
 import os
 import subprocess
-import textwrap
-from time import sleep
 from datetime import datetime
 import asyncio
 import time
 
 import discord
 import pandas as pd
-import pyperclip
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.wait import WebDriverWait, TimeoutException
+from selenium.webdriver import Keys, ActionChains
 
 intents = discord.Intents.default()
 intents.members = True
@@ -25,6 +26,11 @@ intents.members = True
 
 gpt_client = OpenAI()
 discord_client: discord.Client = discord.Client(intents=intents)
+
+
+options = webdriver.ChromeOptions()
+options.add_argument("--incognito")
+options.add_argument("--headless")
 
 
 class Buttons(discord.ui.View):
@@ -216,134 +222,58 @@ def refresh_cookie():
     Refresh the COOKIE environment variable.
     To avoid CAPTCHAs, this function uses ydotool to automate browser interactions.
     """
-    subprocess.Popen(
-        [
-            "ydotoold",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    subprocess.Popen(
-        [
-            "firefox",
-            "--private-window",
-            "--kiosk",
-            "https://see.etsmtl.ca/Postes/Rechercher",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
 
-    sleep(5)  # Wait for the browser to open
+    # Open the browser to the api url
 
-    # Move the mouse to a safe location inside the screen (center-top)
-    subprocess.check_call(["ydotool", "mousemove", "--absolute", "-x", "0", "-y", "0"])
+    driver = webdriver.Chrome(options=options)
+    driver.implicitly_wait(5)
+    driver.get("https://see.etsmtl.ca/Postes/Rechercher")
 
-    subprocess.check_call(
-        ["ydotool", "type", os.environ["EMAIL"], "-d", "0", "-H", "0"]
-    )
+    # # Enter the email and passwords from environment
+    ActionChains(
+        driver,
+    ).send_keys(
+        os.environ["EMAIL"]
+    ).send_keys(Keys.TAB).send_keys(
+        os.environ["PASSWORD"]
+    ).send_keys(Keys.ENTER).perform()
 
-    subprocess.check_call(
-        ["ydotool", "key", "15:1", "15:0"]  # Tab key press and release
-    )
+    wait = WebDriverWait(driver, timeout=10)
+    wait.until(lambda _: driver.find_element(By.ID, "linksDiv").is_displayed())
 
-    subprocess.check_call(
-        ["ydotool", "type", os.environ["PASSWORD"], "-d", "0", "-H", "0"]
+    # navigate to "Use verification code from mobile app or hardware token" option
+    ActionChains(driver).send_keys(Keys.TAB * 4).send_keys(Keys.ENTER).perform()
+
+    # Get 2FA code
+    yk_code = (
+        subprocess.run(
+            ["ykman", "oath", "accounts", "code", "ets", "-s"],
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode("utf-8")
+        .strip()
     )
 
-    subprocess.check_call(
-        ["ydotool", "key", "28:1", "28:0"]  # Enter key press and release
+    wait = WebDriverWait(driver, timeout=10)
+    wait.until(
+        lambda _: driver.find_element(By.ID, "verificationCodeInput").is_displayed()
     )
 
-    sleep(5)
+    ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
 
-    subprocess.check_call(
-        [
-            "ydotool",
-            "key",
-            "15:1",
-            "15:0",
-            "15:1",
-            "15:0",
-            "15:1",
-            "15:0",
-            "15:1",
-            "15:0",
-        ]  # Tab key press and release
-    )
-    subprocess.check_call(
-        ["ydotool", "key", "28:1", "28:0"]  # Enter key press and release
-    )
+    try:
+        # wait until the request has resolved (in chromium browsers this implies the precense of a <pre> tag)
+        wait = WebDriverWait(driver, timeout=20)
+        wait.until(lambda _: driver.find_element(By.TAG_NAME, "pre").is_displayed())
+    except TimeoutException:
+        driver.close()
+        return
 
-    # Get code by using ykman oath accounts code ets
+    # Retrieve ".ASPXAUTH" Cookie\
 
-    sleep(5)
-
-    subprocess.check_call(
-        [
-            "ydotool",
-            "type",
-            subprocess.run(
-                ["ykman", "oath", "accounts", "code", "ets", "-s"],
-                capture_output=True,
-                check=True,
-            )
-            .stdout.decode("utf-8")
-            .strip(),
-            "-d",
-            "0",
-            "-H",
-            "0",
-        ]
-    )
-
-    subprocess.check_call(
-        ["ydotool", "key", "28:1", "28:0"]  # Enter key press and release
-    )
-
-    sleep(5)
-
-    # Shift+F9
-
-    subprocess.check_call(
-        [
-            "ydotool",
-            "key",
-            "42:1",
-            "67:1",
-            "67:0",
-            "42:0",
-        ]
-    )
-
-    sleep(2)
-    subprocess.check_call(["ydotool", "mousemove", "-x", "400", "-y", "687"])
-    subprocess.check_call(["ydotool", "click", "0xC0", "-r", "2"])  # Left click
-
-    # CTRL+C
-    sleep(1)
-    subprocess.check_call(
-        [
-            "ydotool",
-            "key",
-            "29:1",
-            "30:1",
-            "30:0",
-            "46:1",
-            "46:0",
-            "29:0",
-        ]
-    )
-    subprocess.run(
-        ["ykman", "oath", "accounts", "code", "ets", "-s"],
-        capture_output=True,
-        check=True,
-    )
-    while not pyperclip.paste():
-        subprocess.check_call("code")  # Dummy command to refresh clipboard
-        sleep(3)
-
-    new_cookie = pyperclip.paste()
+    new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
+    print(new_cookie)
 
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
 
@@ -359,35 +289,7 @@ def refresh_cookie():
                 f.write(line)
         f.truncate()
 
-    sleep(2)
-
-    # ALT+F4 the code tab
-    subprocess.check_call(
-        [
-            "ydotool",
-            "key",
-            "56:1",
-            "62:1",
-            "62:0",
-            "56:0",
-        ]
-    )
-
-    sleep(1)
-
-    # ALT+F4 the browser
-    subprocess.check_call(
-        [
-            "ydotool",
-            "key",
-            "56:1",
-            "62:1",
-            "62:0",
-            "56:0",
-        ]
-    )
-
-    sleep(2)
+    driver.quit()
 
 
 def review(poste: dict):
@@ -411,7 +313,7 @@ def review(poste: dict):
             messages=[
                 {
                     "role": "system",
-                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 85% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
+                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 60% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
                 },
                 {
                     "role": "user",
@@ -436,38 +338,38 @@ def review(poste: dict):
         .message.content
     )
 
-    if gpt_response["fit"]:
-        print(f"Good fit found: {poste['Titpost']}")
-        # Summary of offer to send to discord for final review
-        summary = (
-            gpt_client.chat.completions.create(
-                model="gpt-5-nano",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an automated assistant that summarizes job postings for easy review.",  # pylint: disable=line-too-long
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            "Summarize the following job posting in 3-4 concise sentences (<600 char) highlighting the key responsibilities and requirements:\n\n"  # pylint: disable=line-too-long
-                            + description_div.get_text(separator="\n")
-                        ),
-                    },
-                ],
-            )
-            .choices[0]
-            .message.content
-        )
+    print(
+        f"{'Good fit' if gpt_response['fit'] else 'Not a good fit'} for job: {poste['Titpost']}"
+    )
 
-        return {
-            "Titpost": poste["Titpost"],
-            "GuidString": poste["GuidString"],
-            "analysis": gpt_response["analysis"],
-            "summary": summary,
-        }
-    print(f"Not a good fit: {poste['Titpost']}")
-    return None
+    # Summary of offer to send to discord for final review
+    summary = (
+        gpt_client.chat.completions.create(
+            model="gpt-5-nano",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an automated assistant that summarizes job postings for easy review.",  # pylint: disable=line-too-long
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarize the following job posting in 3-4 concise sentences (<600 char) highlighting the key responsibilities and requirements:\n\n"  # pylint: disable=line-too-long
+                        + description_div.get_text(separator="\n")
+                    ),
+                },
+            ],
+        )
+        .choices[0]
+        .message.content
+    )
+
+    return {
+        "Titpost": poste["Titpost"],
+        "GuidString": poste["GuidString"],
+        "analysis": gpt_response["analysis"],
+        "summary": summary,
+    }
 
 
 if __name__ == "__main__":
