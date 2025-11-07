@@ -1,0 +1,14 @@
+services:
+  stage-alert:
+    build: .
+    image: stage-alert-async:latest
+    env_file: .env
+    restart: unless-stopped
+    shm_size: 1gb
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      - TZ=America/Toronto
+    volumes:
+      - ./data:/data:rw  # persist TOTP cache / seen-offers, etc.
+

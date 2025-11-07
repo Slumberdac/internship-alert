@@ -19,6 +19,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait, TimeoutException
 from selenium.webdriver import Keys, ActionChains
+from selenium.webdriver.chrome.service import Service
 
 intents = discord.Intents.default()
 intents.members = True
@@ -29,8 +30,16 @@ discord_client: discord.Client = discord.Client(intents=intents)
 
 
 options = webdriver.ChromeOptions()
+options.binary_location = "/usr/bin/chromium"  # Debian/Ubuntu chromium path
+options.add_argument("--headless=new")  # more reliable in recent Chrome
+options.add_argument("--no-sandbox")  # required in most containers
+options.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm issues
+options.add_argument("--disable-gpu")  # harmless on Linux/headless
+options.add_argument("--disable-software-rasterizer")
 options.add_argument("--incognito")
-options.add_argument("--headless")
+
+# If chromium-driver is installed by apt, it’s usually here:
+service = Service(executable_path="/usr/bin/chromedriver")
 
 
 class Buttons(discord.ui.View):
@@ -61,6 +70,7 @@ URL = "https://see.etsmtl.ca/Postes/Rechercher"
 
 payload = {}
 headers = {"Cookie": os.environ["COOKIE"]}
+POSTES_PATH = os.getenv("POSTES_PATH", "postes.csv")
 
 COOKIE_REFRESHED = False
 COOKIE_INVALID_AT = 0.0
@@ -123,8 +133,12 @@ async def on_ready():
                                 if not poste:
                                     continue
                                 await channel.send(
-                                    f'# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n### Analysis\n{poste["analysis"]}',
-                                    view=Buttons(guid_string=poste["GuidString"]),
+                                    f'# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}{'\n\n### Analysis\n{poste["analysis"]}' if os.environ.get("CV_JSON") else ''}',
+                                    view=(
+                                        Buttons(guid_string=poste["GuidString"])
+                                        if os.environ.get("CV_JSON")
+                                        else None
+                                    ),
                                 )
 
                             sleep_time = MIN_INTERVAL
@@ -176,7 +190,7 @@ def fetch_postes():
 
     # get known guids
     try:
-        df_known = pd.read_csv("postes.csv")
+        df_known = pd.read_csv(POSTES_PATH)
         known_guids = set(df_known["GuidString"].tolist())
     except (FileNotFoundError, pd.errors.EmptyDataError):
         known_guids = set()
@@ -187,12 +201,11 @@ def fetch_postes():
     if new_postes:
         df_new = pd.DataFrame(new_postes)
         if known_guids:
-            df_known = pd.read_csv("postes.csv")
+            df_known = pd.read_csv(POSTES_PATH)
             df_combined = pd.concat([df_known, df_new], ignore_index=True)
         else:
             df_combined = df_new
-        df_combined.to_csv("postes.csv", index=False)
-
+        # df_combined.to_csv(POSTES_PATH, index=False)
     return [review(poste) for poste in new_postes]
 
 
@@ -224,8 +237,7 @@ def refresh_cookie():
     """
 
     # Open the browser to the api url
-
-    driver = webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(service=service, options=options)
     driver.implicitly_wait(5)
     driver.get("https://see.etsmtl.ca/Postes/Rechercher")
 
@@ -279,15 +291,15 @@ def refresh_cookie():
 
     headers["Cookie"] = os.environ["COOKIE"]
 
-    with open(".env", "r+", encoding="UTF-8") as f:
-        lines = f.readlines()
-        f.seek(0)
-        for line in lines:
-            if line.startswith("COOKIE="):
-                f.write(f"COOKIE='.ASPXAUTH={new_cookie}'\n")
-            else:
-                f.write(line)
-        f.truncate()
+    # with open(".env", "r+", encoding="UTF-8") as f:
+    #     lines = f.readlines()
+    #     f.seek(0)
+    #     for line in lines:
+    #         if line.startswith("COOKIE="):
+    #             f.write(f"COOKIE='.ASPXAUTH={new_cookie}'\n")
+    #         else:
+    #             f.write(line)
+    #     f.truncate()
 
     driver.quit()
 
@@ -306,41 +318,42 @@ def review(poste: dict):
     soup = BeautifulSoup(poste_page, "html.parser")
     description_div = soup.find("div", id="etsMCContent")
 
-    # Send to GPT to determine fit
-    gpt_response = json.loads(
-        gpt_client.chat.completions.create(
-            model="gpt-5-nano",
-            messages=[
-                {
-                    "role": "system",
-                    "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 60% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "Here is the CV to remember for future job applications:\n\n"
-                        + os.environ["CV_JSON"]
-                        + "\n\n"
-                        + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache. He does not have means of travel to the rive-sud of quebec so cities like boucherville arre out of his reach."  # pylint: disable=line-too-long
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "Here is a new job posting description:\n\n"
-                        + description_div.get_text(separator="\n")
-                        + "\n\nBased on the CV I provided you earlier, determine if the student would be a good fit for this position."  # pylint: disable=line-too-long
-                    ),
-                },
-            ],
+    if os.environ.get("CV_JSON"):
+        # Send to GPT to determine fit
+        gpt_response = json.loads(
+            gpt_client.chat.completions.create(
+                model="gpt-5-nano",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 60% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Here is the CV to remember for future job applications:\n\n"
+                            + os.environ["CV_JSON"]
+                            + "\n\n"
+                            + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache. He does not have means of travel to the rive-sud of quebec so cities like boucherville arre out of his reach."  # pylint: disable=line-too-long
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Here is a new job posting description:\n\n"
+                            + description_div.get_text(separator="\n")
+                            + "\n\nBased on the CV I provided you earlier, determine if the student would be a good fit for this position."  # pylint: disable=line-too-long
+                        ),
+                    },
+                ],
+            )
+            .choices[0]
+            .message.content
         )
-        .choices[0]
-        .message.content
-    )
 
-    print(
-        f"{'Good fit' if gpt_response['fit'] else 'Not a good fit'} for job: {poste['Titpost']}"
-    )
+        print(
+            f"{'Good fit' if gpt_response['fit'] else 'Not a good fit'} for job: {poste['Titpost']}"
+        )
 
     # Summary of offer to send to discord for final review
     summary = (
@@ -364,12 +377,20 @@ def review(poste: dict):
         .message.content
     )
 
-    return {
-        "Titpost": poste["Titpost"],
-        "GuidString": poste["GuidString"],
-        "analysis": gpt_response["analysis"],
-        "summary": summary,
-    }
+    return (
+        {
+            "Titpost": poste["Titpost"],
+            "GuidString": poste["GuidString"],
+            "analysis": gpt_response["analysis"],
+            "summary": summary,
+        }
+        if os.environ.get("CV_JSON")
+        else {
+            "Titpost": poste["Titpost"],
+            "GuidString": poste["GuidString"],
+            "summary": summary,
+        }
+    )
 
 
 if __name__ == "__main__":
