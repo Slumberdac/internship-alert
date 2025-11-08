@@ -2,13 +2,20 @@ services:
   stage-alert:
     build: .
     image: stage-alert-async:latest
-    env_file: .env
     shm_size: 1gb
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
+    #devices:
+    #  - /dev/bus/usb:/dev/bus/usb
     environment:
-      - TZ=America/New York
+      - TZ=America/Montreal
+      - COOKIE=${COOKIE}
+      - EMAIL=${EMAIL}
+      - PASSWORD=${PASSWORD}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
     volumes:
       - ./data:/data:rw  # persist TOTP cache / seen-offers, etc.
+      - /run/pcscd:/run/pcscd
     restart: unless-stopped
 

@@ -13,9 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 libu2f-udev \
       libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
       libxkbcommon0 libxrandr2 \
-      yubikey-manager pcscd libccid pcsc-tools \
-      python3-pyscard gosu \
+      yubikey-manager pcscd libccid pcsc-tools libpcsclite1 \
+      python3-pyscard \
   && rm -rf /var/lib/apt/lists/*
+
+# make Debian dist-packages visible to upstream Python
+ENV PYTHONPATH=/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}
 
 
 # Create non-root user
