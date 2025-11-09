@@ -6,7 +6,7 @@ services:
     #devices:
     #  - /dev/bus/usb:/dev/bus/usb
     environment:
-      - TZ=America/Montreal
+      - TZ=America/Toronto
       - COOKIE=${COOKIE}
       - EMAIL=${EMAIL}
       - PASSWORD=${PASSWORD}
@@ -14,8 +14,12 @@ services:
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
+      - POSTES_PATH=${POSTES_PATH:-/data/postes.csv}  # fallback if not set
+      - CV_JSON=${CV_JSON}
     volumes:
-      - ./data:/data:rw  # persist TOTP cache / seen-offers, etc.
+      - data:/data
       - /run/pcscd:/run/pcscd
     restart: unless-stopped
+volumes:
+  data: {}
 

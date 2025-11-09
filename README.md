@@ -2,19 +2,20 @@
 
 ## Overview
 
-**Stage Alert Async** is an automated job application bot designed to interact with job postings from the ÉTS job board.
-It leverages **asynchronous programming** for efficient, non-blocking operations and provides **real-time Discord notifications** and **automated job analysis** through OpenAI’s GPT models.
+**Stage Alert Async** is an automated job-application assistant for the ÉTS job board.
+It asynchronously monitors new postings, analyzes them against a candidate’s CV using OpenAI GPT, and sends results to Discord — all fully containerized for reliable 24/7 operation.
 
 ---
 
 ## Features
 
-* **Asynchronous Job Fetching** — Fetches new postings concurrently without blocking other tasks.
-* **Discord Integration** — Sends job alerts and summaries directly to a Discord channel.
-* **GPT Integration** — Analyzes postings against the applicant’s CV to evaluate suitability.
-* **Cookie Management** — Automatically refreshes session cookies to stay authenticated with the job board.
-* **Chromium Automation** — Uses headless Chromium to interact with job listings when required.
-* **Dockerized Environment** — Runs consistently across systems without manual Python setup.
+* **Asynchronous job fetching** — non-blocking concurrent network operations.
+* **Discord integration** — posts alerts and summaries directly in a chosen channel.
+* **GPT integration** — evaluates job–CV match quality.
+* **Cookie & session management** — auto-refreshes job-board sessions.
+* **Chromium automation** — interacts with the board in headless mode when needed.
+* **YubiKey 2FA support** — retrieves OATH codes through a shared host `pcscd`.
+* **Docker-based isolation** — consistent runtime across Linux hosts and Raspberry Pi.
 
 ---
 
@@ -26,145 +27,188 @@ stage_alert
 ├── request.py
 ├── Pipfile
 ├── Pipfile.lock
-├── .env.example
 ├── Dockerfile
-├── .dockerignore
+├── docker/
+│   └── entrypoint.sh
+├── compose.yaml
+├── .env.example
 └── README.md
 ```
 
 ---
 
-## Setup
+## Host Setup (once per machine)
 
-### 1. Clone the repository
+### 1. Install pcscd (host YubiKey service)
+
+#### Debian / Raspberry Pi OS
 
 ```bash
-git clone <repository-url>
-cd stage_alert
+sudo apt install -y pcscd libccid pcsc-tools
+echo 'DAEMON_ARGS="--disable-polkit"' | sudo tee /etc/default/pcscd
+sudo systemctl enable --now pcscd
+sudo chmod 666 /run/pcscd/pcscd.comm   # or match group perms later
 ```
 
-### 2. Configure environment variables
+#### Arch Linux
 
-Copy the example file and fill in your credentials:
+```bash
+sudo pacman -Syu --needed pcsclite ccid pcsc-tools
+sudo systemctl edit pcscd
+# Add:
+# [Service]
+# ExecStart=
+# ExecStart=/usr/bin/pcscd --foreground --disable-polkit
+sudo systemctl daemon-reload
+sudo systemctl enable --now pcscd
+sudo chmod 666 /run/pcscd/pcscd.comm
+```
+
+Verify:
+
+```bash
+pcsc_scan | head
+```
+
+You should see your YubiKey reader listed.
+
+### 2. Connect your ETS email account to your YubiKey
+On your Microsoft account security settings, add your YubiKey as a 2FA method.
+Make sure your new YubiKey account has an OATH label of `ETS`.
+
+---
+
+## Environment Configuration
+
+Copy the example file and fill your credentials:
 
 ```bash
 cp .env.example .env
 ```
 
-You can edit `.env` to include your Discord token, GPT API key, and job board credentials.
+Typical variables:
 
----
-
-## Running the Application
-
-### Option A — Using Docker (recommended)
-
-1. **Build the image:**
-
-   ```bash
-   docker build -t stage-alert-async .
-   ```
-
-2. **Run the container with your `.env`:**
-
-   ```bash
-   docker run --env-file .env stage-alert-async
-   ```
-
----
-
-### Option B — Run locally (advanced)
-
-If you prefer to use your local Python installation instead of Docker:
-
-```bash
-pipenv install --dev
-pipenv run python app.py
+```
+COOKIE=...
+EMAIL=...
+PASSWORD=...
+OPENAI_API_KEY=sk-...
+DISCORD_CHANNEL_ID=...
+DISCORD_BOT_TOKEN=...
+DISCORD_ROLE_ID=...
+CV_JSON=...
+POSTES_PATH=/data/postes.csv   # default
 ```
 
-Make sure Chromium and Chromedriver are installed on your system.
+You may create several `.env` files (e.g. `.env.a`, `.env.b`) for multiple parallel bots.
 
 ---
 
-## Development Notes
+## Building the Image
 
-* The app installs dependencies via **Pipenv** directly into the system environment in Docker (`--system --deploy`).
-* Chromium and Chromedriver are included in the container image.
-* To debug or test interactively:
-
-  ```bash
-  docker run -it --env-file .env --entrypoint bash stage-alert-async
-  ```
-* Logs and errors are printed to stdout; you can redirect them if needed:
-
-  ```bash
-  docker logs <container-id>
-  ```
+```bash
+docker build -t stage-alert-async .
+```
 
 ---
 
-## Deploy with Docker Compose
+## Running With Docker Compose (recommended)
 
-Use Docker Compose to keep the bot running with automatic restarts and centralized logs.
-
-### `compose.yml`
+### compose.yaml
 
 ```yaml
-version: "3.9"
-
 services:
   stage-alert:
     build: .
     image: stage-alert-async:latest
-    env_file:
-      - .env
-    restart: unless-stopped
     shm_size: 1gb
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    environment:
+      - TZ=America/Toronto
+      - COOKIE=${COOKIE}
+      - EMAIL=${EMAIL}
+      - PASSWORD=${PASSWORD}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
+      - POSTES_PATH=${POSTES_PATH:-/data/postes.csv}
+      - CV_JSON=${CV_JSON}
+    volumes:
+      - data:/data             # per-project named volume
+      - /run/pcscd:/run/pcscd  # shared host pcscd socket
+    restart: unless-stopped
+volumes:
+  data: {}
 ```
 
 ### Commands
 
 ```bash
-# Build and start in the background
-docker compose up -d --build
+# Build & start
+docker compose -p internship-a --env-file .env.a up -d --build
+
+# Another instance with different env
+docker compose -p internship-b --env-file .env.b up -d
 
 # Follow logs
-docker compose logs -f stage-alert
-
-# Restart after changing only environment vars
-docker compose restart stage-alert
-
-# Stop
-docker compose down
+docker compose -p internship-a logs -f
 ```
 
-### Updating
+Each project name (`-p`) automatically creates its own volume
+(`internship-a_data`, `internship-b_data`), so their `/data/postes.csv` files are isolated.
 
-If you’re building locally:
+---
+
+## Verifying YubiKey access inside a container
+
+```bash
+docker compose -p internship-a exec stage-alert ykman list
+docker compose -p internship-a exec stage-alert ykman oath accounts list
+```
+
+If you see your key and accounts, the pcscd link works.
+
+---
+
+## Local Development (optional)
+
+Run directly on your host (no Docker) if Chromium and Chromedriver are installed:
+
+```bash
+pipenv install
+pipenv run python app.py
+```
+
+---
+
+## Maintenance & Updates
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose -p internship-a up -d --build
 ```
 
-If you’re pulling from a registry:
+Logs:
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose -p internship-a logs -f stage-alert
 ```
 
-### Notes
+To stop an instance:
 
-* Put secrets in `.env` (do **not** commit it).
-* If Chromium still complains, ensure your code launches it with flags like `--no-sandbox` and `--disable-dev-shm-usage`.
-* To run one-off commands inside the container:
+```bash
+docker compose -p internship-a down
+```
 
-  ```bash
-  docker compose exec stage-alert bash
-  ```
+---
+
+## Troubleshooting
+
+| Symptom                                 | Likely Cause                                        | Fix                                                |
+| --------------------------------------- | --------------------------------------------------- | -------------------------------------------------- |
+| `PC/SC not available`                   | Missing `python3-pyscard` or unmounted `/run/pcscd` | Rebuild image or check volume mount                |
+| `No YubiKey detected`                   | Host pcscd not running / bad socket perms           | Restart `pcscd`, `chmod 666 /run/pcscd/pcscd.comm` |
+| `refresh_cookie ... exit 1`             | Wrong OATH label or locked applet                   | Verify with `ykman oath accounts list`             |
+| `Permission denied: '/data/postes.csv'` | Shared bind mount                                   | Use named volume (default)                         |
+
+---

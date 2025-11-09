@@ -70,7 +70,7 @@ URL = "https://see.etsmtl.ca/Postes/Rechercher"
 
 payload = {}
 headers = {"Cookie": os.environ["COOKIE"]}
-POSTES_PATH = os.getenv("POSTES_PATH", "postes.csv")
+POSTES_PATH = os.getenv("POSTES_PATH", "/data/postes.csv")
 
 COOKIE_REFRESHED = False
 COOKIE_INVALID_AT = 0.0
@@ -89,7 +89,6 @@ async def on_ready():
     """
     await discord_client.wait_until_ready()
     channel = discord_client.get_channel(int(os.environ["DISCORD_CHANNEL_ID"]))
-    await channel.send("HELLO WORLD")
     lock = asyncio.Lock()
 
     async def background_checker():
@@ -104,7 +103,7 @@ async def on_ready():
                     if not poste:
                         continue
                     await channel.send(
-                        f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
+                        f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
                         view=Buttons(guid_string=poste["GuidString"]),
                     )
 
@@ -133,7 +132,7 @@ async def on_ready():
                                 if not poste:
                                     continue
                                 await channel.send(
-			                        f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
+                                    f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
                                     view=(
                                         Buttons(guid_string=poste["GuidString"])
                                         if os.environ.get("CV_JSON")
@@ -290,16 +289,6 @@ def refresh_cookie():
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
 
     headers["Cookie"] = os.environ["COOKIE"]
-
-    # with open(".env", "r+", encoding="UTF-8") as f:
-    #     lines = f.readlines()
-    #     f.seek(0)
-    #     for line in lines:
-    #         if line.startswith("COOKIE="):
-    #             f.write(f"COOKIE='.ASPXAUTH={new_cookie}'\n")
-    #         else:
-    #             f.write(line)
-    #     f.truncate()
 
     driver.quit()
 
