@@ -10,9 +10,9 @@ pandas = "*"
 requests = "*"
 beautifulsoup4 = "*"
 openai = "*"
-aiohttp = "*"
 datetime = "*"
 selenium = "*"
+aiohttp = "*"
 
 [dev-packages]
 isort = "*"

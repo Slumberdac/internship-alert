@@ -20,6 +20,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait, TimeoutException
 from selenium.webdriver import Keys, ActionChains
 from selenium.webdriver.chrome.service import Service
+import aiohttp
 
 intents = discord.Intents.default()
 intents.members = True
@@ -57,13 +58,23 @@ class Buttons(discord.ui.View):
         Event handler for when the apply button is clicked.
         Changes the button state to "Applied!" and disables it.
         """
-        button.style = discord.ButtonStyle.green
-        button.label = "Applied!"
-        button.disabled = True
+        # call async apply directly (network won't block event loop)
+        response = await apply(self.guid_string)
+        print("Apply response:", response is None)
+        if response is None:
+            button.style = discord.ButtonStyle.green
+            button.label = "Applied!"
+            button.disabled = True
+        else:
+            button.style = discord.ButtonStyle.red
+            button.label = response
+            button.disabled = response == "ALREADY APPLIED OR EXTERNAL SITE"
+            if button.disabled:
+                # send the offer url for manual application
+                await interaction.user.send(
+                    f"Please apply manually to the offer here: https://see.etsmtl.ca/Poste/{self.guid_string}"
+                )
         await interaction.response.edit_message(view=self)
-
-        # run blocking apply() in a thread so it doesn't block the event loop
-        await asyncio.to_thread(apply, self.guid_string)
 
 
 URL = "https://see.etsmtl.ca/Postes/Rechercher"
@@ -89,7 +100,9 @@ async def on_ready():
     """
     await discord_client.wait_until_ready()
     channel = discord_client.get_channel(int(os.environ["DISCORD_CHANNEL_ID"]))
-    await channel.send(f"Hello world, i have seen {len(pd.read_csv(POSTES_PATH)) if os.path.exists(POSTES_PATH) else 0} offers so far")
+    await channel.send(
+        f"Hello world, i have seen {len(pd.read_csv(POSTES_PATH)) if os.path.exists(POSTES_PATH) else 0} offers so far"
+    )
     lock = asyncio.Lock()
 
     async def background_checker():
@@ -105,7 +118,11 @@ async def on_ready():
                         continue
                     await channel.send(
                         f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
-                        view=Buttons(guid_string=poste["GuidString"]) if os.environ.get("CV_JSON") else None,
+                        view=(
+                            Buttons(guid_string=poste["GuidString"])
+                            if os.environ.get("CV_JSON")
+                            else None
+                        ),
                     )
 
                 sleep_time = MIN_INTERVAL
@@ -210,27 +227,37 @@ def fetch_postes():
     return [review(poste) for poste in new_postes]
 
 
-def apply(guid: str):
-    """Apply to a job posting given its GUID."""
+async def apply(guid: str):
+    """Async apply using aiohttp. If cookie looks expired, run refresh_cookie() in a thread and retry once."""
     print(f"Applying to job with GUID: {guid}")
-    try:
-        request = requests.post(
-            "https://see.etsmtl.ca/Postulation/Postuler",
-            headers=headers,
-            payload={"Postulant.Poste.Guid": guid, "password": os.environ["PASSWORD"]},
-            timeout=10,
-            accept_redirects=False,
-        )
-        print(request.status_code)
-        if request.status_code == 403:
-            print("ALREADY APPLIED OR EXTERNAL SITE")
-        elif request.status_code != 200:
-            print("COOKIE EXPIRED")
-            refresh_cookie()
-            return apply(guid)
-        print(f"Applied to offer {guid}")
-    except requests.Timeout:
-        print("Request timed out")
+    url = "https://see.etsmtl.ca/Postulation/Postuler"
+    data = {"Postulant.Poste.Guid": guid, "password": os.environ["PASSWORD"]}
+
+    # One session per call is OK; you can hoist a ClientSession if you prefer reuse.
+    async with aiohttp.ClientSession(headers=headers) as session:
+        attempts = 0
+        while attempts < 2:
+            attempts += 1
+            try:
+                async with session.post(
+                    url, data=data, timeout=10, allow_redirects=False
+                ) as resp:
+                    print(resp.status)
+                    if resp.status == 403:
+                        print("ALREADY APPLIED OR EXTERNAL SITE")
+                        return "ALREADY APPLIED OR EXTERNAL SITE"
+                    if resp.status != 200:
+                        print("COOKIE EXPIRED")
+                        # refresh cookie using Selenium in a thread, then retry once
+                        await asyncio.to_thread(refresh_cookie)
+                        continue
+                    print(f"Applied to offer {guid}")
+                    return
+            except asyncio.TimeoutError:
+                print("Request timed out")
+                return "Please try again later"
+    print("Failed to apply after retry")
+    return "Please try again later"
 
 
 def refresh_cookie():
