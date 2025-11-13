@@ -14,7 +14,7 @@ services:
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
-      - POSTES_PATH=${POSTES_PATH:-/data/postes.csv}  # fallback if not set
+      - POSTES_PATH=${POSTES_PATH}
       - CV_JSON=${CV_JSON}
     volumes:
       - data:/data

@@ -70,7 +70,7 @@ URL = "https://see.etsmtl.ca/Postes/Rechercher"
 
 payload = {}
 headers = {"Cookie": os.environ["COOKIE"]}
-POSTES_PATH = os.getenv("POSTES_PATH", "/data/postes.csv")
+POSTES_PATH = os.getenv("POSTES_PATH", "postes.csv")
 
 COOKIE_REFRESHED = False
 COOKIE_INVALID_AT = 0.0
@@ -89,6 +89,7 @@ async def on_ready():
     """
     await discord_client.wait_until_ready()
     channel = discord_client.get_channel(int(os.environ["DISCORD_CHANNEL_ID"]))
+    await channel.send(f"Hello world, i have seen {len(pd.read_csv(POSTES_PATH)) if os.path.exists(POSTES_PATH) else 0} offers so far")
     lock = asyncio.Lock()
 
     async def background_checker():
@@ -104,7 +105,7 @@ async def on_ready():
                         continue
                     await channel.send(
                         f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
-                        view=Buttons(guid_string=poste["GuidString"]),
+                        view=Buttons(guid_string=poste["GuidString"]) if os.environ.get("CV_JSON") else None,
                     )
 
                 sleep_time = MIN_INTERVAL
@@ -154,6 +155,7 @@ async def on_ready():
                 print("Error in background_checker:", e)
                 sleep_time = MIN_INTERVAL
 
+            print("waiting for delay")
             await asyncio.sleep(sleep_time)
 
     asyncio.create_task(background_checker())
@@ -210,7 +212,7 @@ def fetch_postes():
 
 def apply(guid: str):
     """Apply to a job posting given its GUID."""
-    # print(f"Applying to job with GUID: {guid}")
+    print(f"Applying to job with GUID: {guid}")
     try:
         request = requests.post(
             "https://see.etsmtl.ca/Postulation/Postuler",
@@ -219,12 +221,14 @@ def apply(guid: str):
             timeout=10,
             accept_redirects=False,
         )
+        print(request.status_code)
         if request.status_code == 403:
             print("ALREADY APPLIED OR EXTERNAL SITE")
         elif request.status_code != 200:
             print("COOKIE EXPIRED")
             refresh_cookie()
             return apply(guid)
+        print(f"Applied to offer {guid}")
     except requests.Timeout:
         print("Request timed out")
 

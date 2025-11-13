@@ -41,6 +41,6 @@ COPY docker/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Run as appuser; entrypoint should NOT start pcscd if /run/pcscd/pcscd.comm exists
-USER appuser
+# USER appuser
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "app.py"]
