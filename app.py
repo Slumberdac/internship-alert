@@ -48,7 +48,7 @@ class Buttons(discord.ui.View):
     Discord UI View with a button to apply to a job posting.
     """
 
-    def __init__(self, guid_string, *, timeout=180):
+    def __init__(self, guid_string, *, timeout=None):
         super().__init__(timeout=timeout)
         self.guid_string = guid_string
 
@@ -60,7 +60,6 @@ class Buttons(discord.ui.View):
         """
         # call async apply directly (network won't block event loop)
         response = await apply(self.guid_string)
-        print("Apply response:", response is None)
         if response is None:
             button.style = discord.ButtonStyle.green
             button.label = "Applied!"
@@ -117,7 +116,7 @@ async def on_ready():
                     if not poste:
                         continue
                     await channel.send(
-                        f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
+                        f'{f"<@&{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
                         view=(
                             Buttons(guid_string=poste["GuidString"])
                             if os.environ.get("CV_JSON")
@@ -150,7 +149,7 @@ async def on_ready():
                                 if not poste:
                                     continue
                                 await channel.send(
-                                    f'{f"<@{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
+                                    f'{f"<@&{int(os.environ["DISCORD_ROLE_ID"])}>" if os.environ.get("DISCORD_ROLE_ID") else ""}\n# New offer\n## {poste["Titpost"]}#\n\n## Description\n{poste["summary"]}\n\n{f"### Analysis\n{poste["analysis"]}" if os.environ.get("CV_JSON") else f"https://see.etsmtl.ca/Poste/{poste["GuidString"]}"}',
                                     view=(
                                         Buttons(guid_string=poste["GuidString"])
                                         if os.environ.get("CV_JSON")
