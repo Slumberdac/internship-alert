@@ -1,4 +1,5 @@
 # Stage Alert Async
+[![Docker Image CI](https://github.com/Slumberdac/internship-alert/actions/workflows/docker-image.yml/badge.svg)](https://github.com/Slumberdac/internship-alert/actions/workflows/docker-image.yml)
 
 ## Overview
 
