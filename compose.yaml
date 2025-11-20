@@ -1,7 +1,7 @@
 services:
   stage-alert:
     build: .
-    image: stage-alert-async:latest
+    image: ghcr.io/slumberdac/stage-alert-async:latest
     shm_size: 1gb
     #devices:
     #  - /dev/bus/usb:/dev/bus/usb
@@ -20,6 +20,14 @@ services:
       - data:/data
       - /run/pcscd:/run/pcscd
     restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --cleanup --interval 30
+
 volumes:
   data: {}
 
