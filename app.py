@@ -60,6 +60,7 @@ class Buttons(discord.ui.View):
         """
         # call async apply directly (network won't block event loop)
         response = await apply(self.guid_string)
+        print("Apply response:", response)
         if response is None:
             button.style = discord.ButtonStyle.green
             button.label = "Applied!"
@@ -239,7 +240,7 @@ async def apply(guid: str):
             attempts += 1
             try:
                 async with session.post(
-                    url, data=data, timeout=10, allow_redirects=False
+                    url, data=data, timeout=30, allow_redirects=False
                 ) as resp:
                     print(resp.status)
                     if resp.status == 403:
@@ -247,11 +248,13 @@ async def apply(guid: str):
                         return "ALREADY APPLIED OR EXTERNAL SITE"
                     if resp.status != 200:
                         print("COOKIE EXPIRED")
-                        # refresh cookie using Selenium in a thread, then retry once
-                        await asyncio.to_thread(refresh_cookie)
+                        # signal that a cookie refresh is needed, avoid doing UI automation on the event loop
+                        globals()["COOKIE_REFRESHED"] = True
+                        globals()["COOKIE_INVALID_AT"] = time.time()
                         continue
-                    print(f"Applied to offer {guid}")
-                    return
+                    else:
+                        print(f"Applied to offer {guid}")
+                        return
             except asyncio.TimeoutError:
                 print("Request timed out")
                 return "Please try again later"
