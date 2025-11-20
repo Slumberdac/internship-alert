@@ -31,5 +31,5 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner,, }}/internship-alert-async:latest
+            ghcr.io/slumberdac/internship-alert-async:latest
 
