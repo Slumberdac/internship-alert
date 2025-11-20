@@ -1,7 +1,7 @@
 services:
   stage-alert:
     build: .
-    image: ghcr.io/slumberdac/stage-alert-async:latest
+    image: ghcr.io/slumberdac/internship-alert-async:latest
     shm_size: 1gb
     #devices:
     #  - /dev/bus/usb:/dev/bus/usb
