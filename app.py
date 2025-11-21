@@ -88,7 +88,7 @@ COOKIE_INVALID_AT = 0.0
 COOKIE_LAST_REFRESH = 0.0
 COOKIE_LIFETIME = 5 * 3600  # 5 hours
 REFRESH_COOLDOWN = 60 * 2  # don't retry refresh more than once every 2 minutes
-MIN_INTERVAL = 60 * 10  # 10 minutes
+MIN_INTERVAL = os.environ.get("DELAY", 60 * 10)  # default to 10 minutes
 MAX_BACKOFF = 6
 
 
