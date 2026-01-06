@@ -20,6 +20,8 @@ services:
       - data:/data
       - /run/pcscd:/run/pcscd
     restart: unless-stopped
+    ulimits:
+      core: 0
 
   watchtower:
     image: containrrr/watchtower:arm64v8-latest
