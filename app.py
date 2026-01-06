@@ -291,7 +291,7 @@ def refresh_cookie():
     # Get 2FA code
     yk_code = (
         subprocess.run(
-            ["ykman", "oath", "accounts", "code", "ets", "-s"],
+            ["ykman", "oath", "accounts", "code", os.environ.get("ACCOUNT","ets"), "-s"],
             capture_output=True,
             check=True,
         )
