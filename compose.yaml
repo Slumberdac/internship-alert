@@ -16,6 +16,7 @@ services:
       - DISCORD_ROLE_ID=${DISCORD_ROLE_ID}
       - POSTES_PATH=${POSTES_PATH}
       - CV_JSON=${CV_JSON}
+      - ACCOUNT=${ACCOUNT}
     volumes:
       - data:/data
       - /run/pcscd:/run/pcscd

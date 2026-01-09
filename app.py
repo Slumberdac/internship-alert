@@ -3,24 +3,24 @@ Automated job application bot for ETS job postings.
 Uses Discord for notifications and OpenAI's GPT-5-nano for job fit analysis.
 """
 
+import asyncio
 import json
 import os
 import subprocess
-from datetime import datetime
-import asyncio
 import time
+from datetime import datetime
 
+import aiohttp
 import discord
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait, TimeoutException
-from selenium.webdriver import Keys, ActionChains
+from selenium.webdriver import ActionChains, Keys
 from selenium.webdriver.chrome.service import Service
-import aiohttp
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.wait import TimeoutException, WebDriverWait
 
 intents = discord.Intents.default()
 intents.members = True
@@ -88,7 +88,7 @@ COOKIE_INVALID_AT = 0.0
 COOKIE_LAST_REFRESH = 0.0
 COOKIE_LIFETIME = 5 * 3600  # 5 hours
 REFRESH_COOLDOWN = 60 * 2  # don't retry refresh more than once every 2 minutes
-MIN_INTERVAL = os.environ.get("DELAY", 60 * 10)  # default to 10 minutes
+MIN_INTERVAL = int(os.environ.get("DELAY", 60 * 10))  # default to 10 minutes
 MAX_BACKOFF = 6
 
 
@@ -265,8 +265,10 @@ async def apply(guid: str):
 def refresh_cookie():
     """
     Refresh the COOKIE environment variable.
-    To avoid CAPTCHAs, this function uses ydotool to automate browser interactions.
+    To avoid CAPTCHAs, this function uses Selenium to automate browser interactions.
     """
+
+    print("Refreshing token")
 
     # Open the browser to the api url
     driver = webdriver.Chrome(service=service, options=options)
@@ -286,7 +288,7 @@ def refresh_cookie():
     wait.until(lambda _: driver.find_element(By.ID, "linksDiv").is_displayed())
 
     # navigate to "Use verification code from mobile app or hardware token" option
-    ActionChains(driver).send_keys(Keys.TAB * 4).send_keys(Keys.ENTER).perform()
+    driver.find_element(By.PARTIAL_LINK_TEXT, "verification code").click()
 
     # Get 2FA code
     yk_code = (
@@ -305,19 +307,20 @@ def refresh_cookie():
     )
 
     ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
-
+    print("HELLO")
     try:
-        # wait until the request has resolved (in chromium browsers this implies the precense of a <pre> tag)
+        # wait until the request has resolved (in chromium browsers this implies the presence of a <pre> tag)
         wait = WebDriverWait(driver, timeout=20)
         wait.until(lambda _: driver.find_element(By.TAG_NAME, "pre").is_displayed())
     except TimeoutException:
+        print("No pre tag")
         driver.close()
         return
 
     # Retrieve ".ASPXAUTH" Cookie\
 
     new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
-    print(new_cookie)
+    print("COOKIE:", new_cookie)
 
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
 
@@ -356,7 +359,7 @@ def review(poste: dict):
                             "Here is the CV to remember for future job applications:\n\n"
                             + os.environ["CV_JSON"]
                             + "\n\n"
-                            + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache. He does not have means of travel to the rive-sud of quebec so cities like boucherville arre out of his reach."  # pylint: disable=line-too-long
+                            + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache. He does not have means of travel to the rive-sud of quebec so cities like boucherville are out of his reach."  # pylint: disable=line-too-long
                         ),
                     },
                     {

@@ -13,7 +13,9 @@ openai = "*"
 datetime = "*"
 selenium = "*"
 aiohttp = "*"
+codespell = "*"
 
 [dev-packages]
 isort = "*"
 black = "*"
+codespell = "*"
