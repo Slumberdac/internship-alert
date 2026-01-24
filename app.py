@@ -307,20 +307,17 @@ def refresh_cookie():
     )
 
     ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
-    print("HELLO")
     try:
         # wait until the request has resolved (in chromium browsers this implies the presence of a <pre> tag)
         wait = WebDriverWait(driver, timeout=20)
         wait.until(lambda _: driver.find_element(By.TAG_NAME, "pre").is_displayed())
     except TimeoutException:
-        print("No pre tag")
         driver.close()
         return
 
     # Retrieve ".ASPXAUTH" Cookie\
 
     new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
-    print("COOKIE:", new_cookie)
 
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
 
@@ -359,7 +356,7 @@ def review(poste: dict):
                             "Here is the CV to remember for future job applications:\n\n"
                             + os.environ["CV_JSON"]
                             + "\n\n"
-                            + "Note that the applicant can only travel as far as these cities and their environs: Montreal, Laval, Quebec City, Trois-Rivières Terrebonne, Mirabel, Repentigny, Mascouche, St-Eustache. He does not have means of travel to the rive-sud of quebec so cities like boucherville are out of his reach."  # pylint: disable=line-too-long
+                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE"}"  # pylint: disable=line-too-long
                         ),
                     },
                     {
