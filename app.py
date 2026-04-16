@@ -356,7 +356,7 @@ def review(poste: dict):
                             "Here is the CV to remember for future job applications:\n\n"
                             + os.environ["CV_JSON"]
                             + "\n\n"
-                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE"}"  # pylint: disable=line-too-long
+                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE", "Any")}"  # pylint: disable=line-too-long
                         ),
                     },
                     {
