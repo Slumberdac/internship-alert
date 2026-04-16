@@ -325,6 +325,8 @@ def refresh_cookie():
 
     driver.quit()
 
+    print(".ASPXAUTH=" + new_cookie)
+
 
 def review(poste: dict):
     """
