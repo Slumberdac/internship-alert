@@ -213,3 +213,4 @@ pyrightconfig.json
 
 # Custom ignores
 data/
+debug.html

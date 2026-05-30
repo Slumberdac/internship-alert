@@ -307,10 +307,11 @@ def refresh_cookie():
     )
 
     ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
+    driver.implicitly_wait(20)
     try:
         # wait until the request has resolved (in chromium browsers this implies the presence of a <pre> tag)
         wait = WebDriverWait(driver, timeout=20)
-        wait.until(lambda _: driver.find_element(By.TAG_NAME, "pre").is_displayed())
+        wait.until(lambda _: driver.find_element(By.TAG_NAME, "body").is_displayed())
     except TimeoutException:
         driver.close()
         return

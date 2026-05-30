@@ -75,7 +75,6 @@ You should see your YubiKey reader listed.
 
 ### 2. Connect your ETS email account to your YubiKey
 On your Microsoft account security settings, add your YubiKey as a 2FA method.
-Make sure your new YubiKey account has an OATH label of `ETS`.
 
 ---
 
