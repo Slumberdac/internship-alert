@@ -21,6 +21,7 @@ from selenium.webdriver import ActionChains, Keys
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import TimeoutException, WebDriverWait
+from selenium.common.exceptions import StaleElementReferenceException
 
 intents = discord.Intents.default()
 intents.members = True
@@ -38,10 +39,11 @@ options.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm issues
 options.add_argument("--disable-gpu")  # harmless on Linux/headless
 options.add_argument("--disable-software-rasterizer")
 options.add_argument("--incognito")
+options.add_argument('--lang=en_US')
+
 
 # If chromium-driver is installed by apt, it’s usually here:
 service = Service(executable_path="/usr/bin/chromedriver")
-
 
 class Buttons(discord.ui.View):
     """
@@ -81,7 +83,7 @@ URL = "https://see.etsmtl.ca/Postes/Rechercher"
 
 payload = {}
 headers = {"Cookie": os.environ["COOKIE"]}
-POSTES_PATH = os.getenv("POSTES_PATH", "postes.csv")
+POSTES_PATH = os.environ.get("POSTES_PATH", "postes.csv")
 
 COOKIE_REFRESHED = False
 COOKIE_INVALID_AT = 0.0
@@ -125,7 +127,6 @@ async def on_ready():
                         ),
                     )
 
-                sleep_time = MIN_INTERVAL
 
                 # If a cookie refresh was triggered, ensure we haven't refreshed too recently,
                 # run the heavy UI automation in a thread, and immediately re-run fetch_postes.
@@ -158,22 +159,16 @@ async def on_ready():
                                     ),
                                 )
 
-                            sleep_time = MIN_INTERVAL
                         except Exception as e:
                             print("refresh_cookie failed:", e)
                             # if refresh failed, keep COOKIE_REFRESHED True so we can retry later
                             globals()["COOKIE_REFRESHED"] = True
-                            sleep_time = MIN_INTERVAL
-                    else:
-                        # Too soon to attempt another refresh; wait normally
-                        sleep_time = MIN_INTERVAL
 
             except Exception as e:
                 print("Error in background_checker:", e)
-                sleep_time = MIN_INTERVAL
 
             print("waiting for delay")
-            await asyncio.sleep(sleep_time)
+            await asyncio.sleep(MIN_INTERVAL)
 
     asyncio.create_task(background_checker())
 
@@ -195,10 +190,12 @@ def fetch_postes():
             allow_redirects=False,
         )
         if request.status_code != 200:
-            print("COOKIE EXPIRED")
-            # signal that a cookie refresh is needed, avoid doing UI automation on the event loop
-            globals()["COOKIE_REFRESHED"] = True
-            globals()["COOKIE_INVALID_AT"] = time.time()
+            print(f"REQUEST FAILED: {request.status_code}")
+            if request.status_code == 302:
+                print("OLD COOKIE, REFRESHING")
+                # signal that a cookie refresh is needed, avoid doing UI automation on the event loop
+                globals()["COOKIE_REFRESHED"] = True
+                globals()["COOKIE_INVALID_AT"] = time.time()
             return None
     except requests.Timeout:
         print("Request timed out")
@@ -228,7 +225,10 @@ def fetch_postes():
 
 
 async def apply(guid: str):
-    """Async apply using aiohttp. If cookie looks expired, run refresh_cookie() in a thread and retry once."""
+    """
+    Async apply using aiohttp.
+    If cookie looks expired, run refresh_cookie() in a thread and retry once.
+    """
     print(f"Applying to job with GUID: {guid}")
     url = "https://see.etsmtl.ca/Postulation/Postuler"
     data = {"Postulant.Poste.Guid": guid, "password": os.environ["PASSWORD"]}
@@ -270,55 +270,66 @@ def refresh_cookie():
 
     print("Refreshing token")
 
-    # Open the browser to the api url
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.implicitly_wait(5)
-    driver.get("https://see.etsmtl.ca/Postes/Rechercher")
-
-    # # Enter the email and passwords from environment
-    ActionChains(
-        driver,
-    ).send_keys(
-        os.environ["EMAIL"]
-    ).send_keys(Keys.TAB).send_keys(
-        os.environ["PASSWORD"]
-    ).send_keys(Keys.ENTER).perform()
-
-    wait = WebDriverWait(driver, timeout=10)
-    wait.until(lambda _: driver.find_element(By.ID, "linksDiv").is_displayed())
-
-    # navigate to "Use verification code from mobile app or hardware token" option
-    driver.find_element(By.PARTIAL_LINK_TEXT, "verification code").click()
-
-    # Get 2FA code
-    yk_code = (
-        subprocess.run(
-            ["ykman", "oath", "accounts", "code", os.environ.get("ACCOUNT","ets"), "-s"],
-            capture_output=True,
-            check=True,
-        )
-        .stdout.decode("utf-8")
-        .strip()
-    )
-
-    wait = WebDriverWait(driver, timeout=10)
-    wait.until(
-        lambda _: driver.find_element(By.ID, "verificationCodeInput").is_displayed()
-    )
-
-    ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
-    driver.implicitly_wait(20)
     try:
-        # wait until the request has resolved (in chromium browsers this implies the presence of a <pre> tag)
-        wait = WebDriverWait(driver, timeout=20)
-        wait.until(lambda _: driver.find_element(By.TAG_NAME, "body").is_displayed())
-    except TimeoutException:
+        # Open the browser to the api url
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.implicitly_wait(30)
+        driver.get("https://see.etsmtl.ca/Postes/Rechercher")
+
+        # # Enter the email and passwords from environment
+        ActionChains(
+            driver,
+        ).send_keys(
+            os.environ["EMAIL"]
+        ).send_keys(Keys.TAB).send_keys(
+            os.environ["PASSWORD"]
+        ).send_keys(Keys.ENTER).perform()
+
+        wait = WebDriverWait(driver, timeout=10)
+        
+        # Optional click on "Use a different verification" to skip microsoft authenticator app if it is the default
+        try:
+            driver.find_element(By.PARTIAL_LINK_TEXT, "different verification").click()
+            wait = WebDriverWait(driver, timeout=10)
+        except Exception:
+            print("No 'Use a different verification method' link found, continuing with default method.")
+            
+        wait.until(lambda _: driver.find_element(By.ID, "linksDiv").is_displayed())
+
+        # navigate to "Use verification code from mobile app or hardware token" option
+        driver.find_element(By.PARTIAL_LINK_TEXT, "verification code").click()
+
+        # Get 2FA code
+        yk_code = (
+            subprocess.run(
+                ["ykman", "oath", "accounts", "code", os.environ.get("ACCOUNT","ets"), "-s"],
+                capture_output=True,
+                check=True,
+            )
+            .stdout.decode("utf-8")
+            .strip()
+        )
+
+        wait = WebDriverWait(driver, timeout=10)
+        wait.until(
+            lambda _: driver.find_element(By.ID, "verificationCodeInput").is_displayed()
+        )
+
+        ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
+        try:
+            # wait until the request has resolved
+            wait = WebDriverWait(driver, timeout=60)
+            wait.until(lambda _: driver.find_element(By.TAG_NAME, "body").is_displayed())
+        except TimeoutException:
+            driver.close()
+            return
+        # Retrieve ".ASPXAUTH" Cookie
+
+        new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
+    except (StaleElementReferenceException, TypeError):
         driver.close()
         return
 
-    # Retrieve ".ASPXAUTH" Cookie\
-
-    new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
 
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
 
@@ -351,7 +362,7 @@ def review(poste: dict):
                 messages=[
                     {
                         "role": "system",
-                        "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an entry level intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 60% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
+                        "content": 'You are an automated job application assistant for ETS job postings. Remember the CV provided for future applications. You will be given internship offers that were scraped online, using the JSON resume provided later determine if the student would be a good fit for an intern, Answer with 1 if yes and 0 if no and then a brief explanation (<400 char) in the following format:{"fit": 1,"analysis": "The student is a good fit because..."} If they are not at least 60% competent they will be injustly taking someone else\'s place since there is a limited amount of applicant spots so be very strict',  # pylint: disable=line-too-long
                     },
                     {
                         "role": "user",
@@ -359,7 +370,7 @@ def review(poste: dict):
                             "Here is the CV to remember for future job applications:\n\n"
                             + os.environ["CV_JSON"]
                             + "\n\n"
-                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE", "Any")}"  # pylint: disable=line-too-long
+                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE", "Any, the applicant has means to go anywhere for their internship")}"  # pylint: disable=line-too-long
                         ),
                     },
                     {
@@ -423,3 +434,4 @@ if __name__ == "__main__":
         os.environ["DISCORD_BOT_TOKEN"],
         log_handler=None,
     )
+    # fetch_postes()
