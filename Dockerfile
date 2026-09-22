@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1.7
+
+# Build rsc.io/2fa as a static binary
+FROM golang:1 AS twofa
+RUN CGO_ENABLED=0 go install rsc.io/2fa@latest
+
 FROM python:3.13-slim
 
 # Runtime defaults (add POSTES_PATH so code can use it)
@@ -7,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     POSTES_PATH=/data/postes.csv
 
-# OS deps: Chromium + YubiKey tooling + PC/SC client libs
+# OS deps: Chromium + YubiKey tooling + PC/SC client libs + socat for the host 2FA socket
 RUN apt-get update && apt-get install -y --no-install-recommends \
       chromium chromium-driver \
       nano \
@@ -16,8 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 libu2f-udev \
       libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
       libxkbcommon0 libxrandr2 \
-      yubikey-manager pcsc-tools libccid libpcsclite1 python3-pyscard \
+      yubikey-manager pcscd pcsc-tools libccid libpcsclite1 python3-pyscard \
+      socat \
   && rm -rf /var/lib/apt/lists/*
+
+# 2fa CLI (reads $HOME/.2fa)
+COPY --from=twofa /go/bin/2fa /usr/local/bin/2fa
 
 # Make Debian's dist-packages visible to upstream Python (python:3.13)
 ENV PYTHONPATH=/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}

@@ -6,6 +6,8 @@ Uses Discord for notifications and OpenAI's GPT-5-nano for job fit analysis.
 import asyncio
 import json
 import os
+import shutil
+import socket
 import subprocess
 import time
 from datetime import datetime
@@ -44,6 +46,65 @@ options.add_argument('--lang=en_US')
 
 # If chromium-driver is installed by apt, it’s usually here:
 service = Service(executable_path="/usr/bin/chromedriver")
+
+
+ACCOUNT = os.environ.get("ACCOUNT", "ets")
+TOTP_SOCKET = os.environ.get("TOTP_SOCKET", "/run/totp/totp.sock")
+
+
+def _run_totp_cmd(argv: list[str]) -> str:
+    """Run a TOTP CLI and return its trimmed stdout."""
+    result = subprocess.run(argv, capture_output=True, check=True, timeout=30)
+    return result.stdout.decode("utf-8").strip()
+
+
+def _code_from_ykman() -> str:
+    """Read the code from an attached YubiKey over PC/SC."""
+    return _run_totp_cmd(
+        ["ykman", "oath", "accounts", "code", "-s", ACCOUNT]
+    )
+
+
+def _code_from_2fa() -> str:
+    """Read the code from rsc.io/2fa, using the keychain at $HOME/.2fa."""
+    return _run_totp_cmd(["2fa", ACCOUNT])
+
+
+def _code_from_socket() -> str:
+    """Ask the host generator for a code over a mounted unix socket."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(30)
+        sock.connect(TOTP_SOCKET)
+        sock.sendall(ACCOUNT.encode("utf-8") + b"\n")
+        return sock.recv(64).decode("utf-8").strip()
+
+
+# Tried in order; the first one that yields a usable code wins.
+TOTP_PROVIDERS = (
+    ("ykman", _code_from_ykman, lambda: shutil.which("ykman") is not None),
+    ("socket", _code_from_socket, lambda: os.path.exists(TOTP_SOCKET)),
+    ("2fa", _code_from_2fa, lambda: shutil.which("2fa") is not None),
+)
+
+
+def get_2fa_code() -> str:
+    """Return a TOTP code for ACCOUNT from whichever provider works."""
+    errors = []
+    for name, provider, available in TOTP_PROVIDERS:
+        if not available():
+            continue
+        try:
+            code = provider()
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f"{name}: {exc}")
+            continue
+        if code.isdigit() and 6 <= len(code) <= 8:
+            print(f"Got 2FA code from {name}")
+            return code
+        errors.append(f"{name}: unexpected output {code!r}")
+
+    raise RuntimeError("No 2FA code available (" + "; ".join(errors) + ")")
+
 
 class Buttons(discord.ui.View):
     """
@@ -270,10 +331,11 @@ def refresh_cookie():
 
     print("Refreshing token")
 
+    driver = None
     try:
         # Open the browser to the api url
         driver = webdriver.Chrome(service=service, options=options)
-        driver.implicitly_wait(30)
+        # driver.implicitly_wait(30)
         driver.get("https://see.etsmtl.ca/Postes/Rechercher")
 
         # # Enter the email and passwords from environment
@@ -286,53 +348,45 @@ def refresh_cookie():
         ).send_keys(Keys.ENTER).perform()
 
         wait = WebDriverWait(driver, timeout=10)
-        
+
         # Optional click on "Use a different verification" to skip microsoft authenticator app if it is the default
         try:
             driver.find_element(By.PARTIAL_LINK_TEXT, "different verification").click()
             wait = WebDriverWait(driver, timeout=10)
         except Exception:
             print("No 'Use a different verification method' link found, continuing with default method.")
-            
+
         wait.until(lambda _: driver.find_element(By.ID, "linksDiv").is_displayed())
 
         # navigate to "Use verification code from mobile app or hardware token" option
         driver.find_element(By.PARTIAL_LINK_TEXT, "verification code").click()
 
         # Get 2FA code
-        yk_code = (
-            subprocess.run(
-                ["ykman", "oath", "accounts", "code", os.environ.get("ACCOUNT","ets"), "-s"],
-                capture_output=True,
-                check=True,
-            )
-            .stdout.decode("utf-8")
-            .strip()
-        )
+        code = get_2fa_code()
 
         wait = WebDriverWait(driver, timeout=10)
         wait.until(
             lambda _: driver.find_element(By.ID, "verificationCodeInput").is_displayed()
         )
 
-        ActionChains(driver).send_keys(yk_code).send_keys(Keys.ENTER).perform()
+        ActionChains(driver).send_keys(code).send_keys(Keys.ENTER).perform()
         try:
             # wait until the request has resolved
             wait = WebDriverWait(driver, timeout=60)
             wait.until(lambda _: driver.find_element(By.TAG_NAME, "body").is_displayed())
         except TimeoutException:
-            driver.close()
+            driver.quit()
             return
         # Retrieve ".ASPXAUTH" Cookie
 
         new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
-    except (StaleElementReferenceException, TypeError):
-        driver.close()
+    except (StaleElementReferenceException, TypeError, RuntimeError) as exc:
+        print("refresh_cookie failed:", exc)
+        if driver:
+            driver.quit()
         return
 
-
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
-
     headers["Cookie"] = os.environ["COOKIE"]
 
     driver.quit()
@@ -435,3 +489,4 @@ if __name__ == "__main__":
         log_handler=None,
     )
     # fetch_postes()
+    # on_ready()
