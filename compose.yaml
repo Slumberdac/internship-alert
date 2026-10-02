@@ -1,5 +1,7 @@
 services:
   stage-alert:
+    labels:
+        com.centurylinklabs.watchtower.enable: "true"
     pull_policy: always
     build:
       context: .
@@ -37,6 +39,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      - WATCHTOWER_LABEL_ENABLE: "true"
       - DOCKER_HOST=unix:///var/run/docker.sock
       - DOCKER_API_VERSION=1.52
     command: --cleanup --interval 30
