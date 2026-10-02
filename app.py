@@ -10,6 +10,7 @@ import shutil
 import socket
 import subprocess
 import time
+import traceback
 from datetime import datetime
 
 import aiohttp
@@ -19,25 +20,28 @@ import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from selenium import webdriver
+from selenium.common.exceptions import (NoSuchElementException,
+                                        StaleElementReferenceException,
+                                        WebDriverException)
 from selenium.webdriver import ActionChains, Keys
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import TimeoutException, WebDriverWait
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    StaleElementReferenceException,
-    WebDriverException,
-)
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import TimeoutException, WebDriverWait
 
 IGNORED = (NoSuchElementException, StaleElementReferenceException)
 DEBUG_DIR = os.environ.get("DEBUG_DIR", "-v ./debug:/debug -e DEBUG_DIR=/debug")
 
 
-def dump_failure(driver, exc):
+def dump_failure(driver, exc, step):
     """Log the failing step's exception, URL, screenshot and page source."""
+    os.makedirs(DEBUG_DIR, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    print("refresh_cookie failed:", type(exc).__name__, getattr(exc, "msg", exc))
+    print(
+        f"refresh_cookie failed at '{step}':",
+        type(exc).__name__,
+        getattr(exc, "msg", exc),
+    )
     if not driver:
         return
     try:
@@ -45,8 +49,8 @@ def dump_failure(driver, exc):
         driver.save_screenshot(os.path.join(DEBUG_DIR, f"refresh_fail_{stamp}.png"))
         with open(os.path.join(DEBUG_DIR, f"refresh_fail_{stamp}.html"), "w") as f:
             f.write(driver.page_source)
-    except WebDriverException as dump_exc:
-        print("could not capture page state:", type(dump_exc).__name__)
+    except Exception as dump_exc:
+        print("could not capture page state:", type(dump_exc).__name__, dump_exc)
 
 
 intents = discord.Intents.default()
@@ -349,19 +353,27 @@ def refresh_cookie():
     print("Refreshing token")
 
     driver = None
+    step = "start driver"
     try:
         driver = webdriver.Chrome(service=service, options=options)
-        wait = WebDriverWait(driver, timeout=15, ignored_exceptions=IGNORED)
+        wait = WebDriverWait(driver, timeout=20, ignored_exceptions=IGNORED)
 
+        step = "open board"
         driver.get("https://see.etsmtl.ca/Postes/Rechercher")
 
-        # Wait for the login form to have focus before typing
-        wait.until(lambda d: d.switch_to.active_element.tag_name == "input")
-        ActionChains(driver).send_keys(os.environ["EMAIL"]).send_keys(
-            Keys.TAB
-        ).send_keys(os.environ["PASSWORD"]).send_keys(Keys.ENTER).perform()
+        step = "email"
+        email = wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type=email]"))
+        )
+        email.send_keys(os.environ["EMAIL"], Keys.ENTER)
 
-        # MFA page shows either the method list or the authenticator prompt
+        step = "password"
+        password = wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type=password]"))
+        )
+        password.send_keys(os.environ["PASSWORD"], Keys.ENTER)
+
+        step = "mfa page"
         wait.until(
             EC.any_of(
                 EC.visibility_of_element_located((By.ID, "linksDiv")),
@@ -374,25 +386,26 @@ def refresh_cookie():
         if other and other[0].is_displayed():
             other[0].click()
 
+        step = "choose code method"
         wait.until(EC.visibility_of_element_located((By.ID, "linksDiv")))
         wait.until(
             EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "verification code"))
         ).click()
 
+        step = "enter code"
         field = wait.until(EC.element_to_be_clickable((By.ID, "verificationCodeInput")))
         field.send_keys(get_2fa_code(), Keys.ENTER)
 
+        step = "wait for cookie"
         cookie = WebDriverWait(driver, timeout=60).until(
             lambda d: d.get_cookie(".ASPXAUTH")
         )
         new_cookie = cookie["value"]
 
-    except WebDriverException as exc:
-        dump_failure(driver, exc)
-        return
     except Exception as exc:
-        dump_failure(driver, exc)
-        traceback.print_exc()
+        dump_failure(driver, exc, step)
+        if not isinstance(exc, WebDriverException):
+            traceback.print_exc()
         return
     finally:
         if driver:
