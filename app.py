@@ -23,7 +23,31 @@ from selenium.webdriver import ActionChains, Keys
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import TimeoutException, WebDriverWait
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    StaleElementReferenceException,
+    WebDriverException,
+)
+from selenium.webdriver.support import expected_conditions as EC
+
+IGNORED = (NoSuchElementException, StaleElementReferenceException)
+DEBUG_DIR = os.environ.get("DEBUG_DIR", "-v ./debug:/debug -e DEBUG_DIR=/debug")
+
+
+def dump_failure(driver, exc):
+    """Log the failing step's exception, URL, screenshot and page source."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    print("refresh_cookie failed:", type(exc).__name__, getattr(exc, "msg", exc))
+    if not driver:
+        return
+    try:
+        print("url:", driver.current_url)
+        driver.save_screenshot(os.path.join(DEBUG_DIR, f"refresh_fail_{stamp}.png"))
+        with open(os.path.join(DEBUG_DIR, f"refresh_fail_{stamp}.html"), "w") as f:
+            f.write(driver.page_source)
+    except WebDriverException as dump_exc:
+        print("could not capture page state:", type(dump_exc).__name__)
+
 
 intents = discord.Intents.default()
 intents.members = True
@@ -41,7 +65,7 @@ options.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm issues
 options.add_argument("--disable-gpu")  # harmless on Linux/headless
 options.add_argument("--disable-software-rasterizer")
 options.add_argument("--incognito")
-options.add_argument('--lang=en_US')
+options.add_argument("--lang=en_US")
 
 
 # If chromium-driver is installed by apt, it’s usually here:
@@ -60,9 +84,7 @@ def _run_totp_cmd(argv: list[str]) -> str:
 
 def _code_from_ykman() -> str:
     """Read the code from an attached YubiKey over PC/SC."""
-    return _run_totp_cmd(
-        ["ykman", "oath", "accounts", "code", "-s", ACCOUNT]
-    )
+    return _run_totp_cmd(["ykman", "oath", "accounts", "code", "-s", ACCOUNT])
 
 
 def _code_from_2fa() -> str:
@@ -187,7 +209,6 @@ async def on_ready():
                             else None
                         ),
                     )
-
 
                 # If a cookie refresh was triggered, ensure we haven't refreshed too recently,
                 # run the heavy UI automation in a thread, and immediately re-run fetch_postes.
@@ -324,73 +345,61 @@ async def apply(guid: str):
 
 
 def refresh_cookie():
-    """
-    Refresh the COOKIE environment variable.
-    To avoid CAPTCHAs, this function uses Selenium to automate browser interactions.
-    """
-
+    """Refresh the COOKIE environment variable using Selenium to avoid CAPTCHAs."""
     print("Refreshing token")
 
     driver = None
     try:
-        # Open the browser to the api url
         driver = webdriver.Chrome(service=service, options=options)
-        driver.implicitly_wait(30)
+        wait = WebDriverWait(driver, timeout=15, ignored_exceptions=IGNORED)
+
         driver.get("https://see.etsmtl.ca/Postes/Rechercher")
 
-        # # Enter the email and passwords from environment
-        ActionChains(
-            driver,
-        ).send_keys(
-            os.environ["EMAIL"]
-        ).send_keys(Keys.TAB).send_keys(
-            os.environ["PASSWORD"]
-        ).send_keys(Keys.ENTER).perform()
+        # Wait for the login form to have focus before typing
+        wait.until(lambda d: d.switch_to.active_element.tag_name == "input")
+        ActionChains(driver).send_keys(os.environ["EMAIL"]).send_keys(
+            Keys.TAB
+        ).send_keys(os.environ["PASSWORD"]).send_keys(Keys.ENTER).perform()
 
-        wait = WebDriverWait(driver, timeout=10)
-
-        # Optional click on "Use a different verification" to skip microsoft authenticator app if it is the default
-        try:
-            driver.find_element(By.PARTIAL_LINK_TEXT, "different verification").click()
-            wait = WebDriverWait(driver, timeout=10)
-        except Exception:
-            print("No 'Use a different verification method' link found, continuing with default method.")
-
-        wait.until(lambda _: driver.find_element(By.ID, "linksDiv").is_displayed())
-
-        # navigate to "Use verification code from mobile app or hardware token" option
-        driver.find_element(By.PARTIAL_LINK_TEXT, "verification code").click()
-
-        # Get 2FA code
-        code = get_2fa_code()
-
-        wait = WebDriverWait(driver, timeout=10)
+        # MFA page shows either the method list or the authenticator prompt
         wait.until(
-            lambda _: driver.find_element(By.ID, "verificationCodeInput").is_displayed()
+            EC.any_of(
+                EC.visibility_of_element_located((By.ID, "linksDiv")),
+                EC.element_to_be_clickable(
+                    (By.PARTIAL_LINK_TEXT, "different verification")
+                ),
+            )
         )
+        other = driver.find_elements(By.PARTIAL_LINK_TEXT, "different verification")
+        if other and other[0].is_displayed():
+            other[0].click()
 
-        ActionChains(driver).send_keys(code).send_keys(Keys.ENTER).perform()
-        try:
-            # wait until the request has resolved
-            wait = WebDriverWait(driver, timeout=60)
-            wait.until(lambda _: driver.find_element(By.TAG_NAME, "body").is_displayed())
-        except TimeoutException:
-            driver.quit()
-            return
-        # Retrieve ".ASPXAUTH" Cookie
+        wait.until(EC.visibility_of_element_located((By.ID, "linksDiv")))
+        wait.until(
+            EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "verification code"))
+        ).click()
 
-        new_cookie = driver.get_cookie(".ASPXAUTH")["value"]
-    except (StaleElementReferenceException, TypeError, RuntimeError) as exc:
-        print("refresh_cookie failed:", exc)
+        field = wait.until(EC.element_to_be_clickable((By.ID, "verificationCodeInput")))
+        field.send_keys(get_2fa_code(), Keys.ENTER)
+
+        cookie = WebDriverWait(driver, timeout=60).until(
+            lambda d: d.get_cookie(".ASPXAUTH")
+        )
+        new_cookie = cookie["value"]
+
+    except WebDriverException as exc:
+        dump_failure(driver, exc)
+        return
+    except Exception as exc:
+        dump_failure(driver, exc)
+        traceback.print_exc()
+        return
+    finally:
         if driver:
             driver.quit()
-        return
 
     os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
     headers["Cookie"] = os.environ["COOKIE"]
-
-    driver.quit()
-
     print(".ASPXAUTH=" + new_cookie)
 
 

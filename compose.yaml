@@ -1,7 +1,8 @@
 services:
   stage-alert:
     labels:
-        com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.enable: "true"
+      com.centurylinklabs.watchtower.scope: "stage-alert"
     pull_policy: always
     build:
       context: .
@@ -9,11 +10,13 @@ services:
         - linux/amd64
         - linux/arm64
     image: ghcr.io/slumberdac/internship-alert-async:latest
+    init: true
     shm_size: 1gb
     # devices:
     #   - /dev/bus/usb:/dev/bus/usb
     environment:
       - TZ=America/Toronto
+      - DEBUG_DIR=/data/debug
       - COOKIE=${COOKIE}
       - EMAIL=${EMAIL}
       - PASSWORD=${PASSWORD}
@@ -34,15 +37,18 @@ services:
       core: 0
 
   watchtower:
-    image: containrrr/watchtower:arm64v8-latest
+    image: containrrr/watchtower:latest
+    labels:
+      com.centurylinklabs.watchtower.scope: "stage-alert"
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_SCOPE=stage-alert
       - DOCKER_HOST=unix:///var/run/docker.sock
       - DOCKER_API_VERSION=1.52
-    command: --cleanup --interval 30
+    command: --cleanup --interval 300
 
 volumes:
   data: {}
