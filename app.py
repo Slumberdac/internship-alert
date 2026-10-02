@@ -335,7 +335,7 @@ def refresh_cookie():
     try:
         # Open the browser to the api url
         driver = webdriver.Chrome(service=service, options=options)
-        # driver.implicitly_wait(30)
+        driver.implicitly_wait(30)
         driver.get("https://see.etsmtl.ca/Postes/Rechercher")
 
         # # Enter the email and passwords from environment
