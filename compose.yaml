@@ -1,10 +1,15 @@
 services:
   stage-alert:
-    build: .
+    pull_policy: always
+    build:
+      context: .
+      platforms:
+        - linux/amd64
+        - linux/arm64
     image: ghcr.io/slumberdac/internship-alert-async:latest
     shm_size: 1gb
-    #devices:
-    #  - /dev/bus/usb:/dev/bus/usb
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb
     environment:
       - TZ=America/Toronto
       - COOKIE=${COOKIE}
@@ -38,4 +43,3 @@ services:
 
 volumes:
   data: {}
-

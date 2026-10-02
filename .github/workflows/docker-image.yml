@@ -7,6 +7,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout
@@ -26,11 +29,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push multi-arch image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/slumberdac/internship-alert-async:latest
-
+            ghcr.io/slumberdac/internship-alert-async:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
