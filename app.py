@@ -10,8 +10,10 @@ import shutil
 import socket
 import subprocess
 import time
+import glob
 import traceback
 from datetime import datetime
+from urllib.parse import urlparse
 
 import aiohttp
 import discord
@@ -22,15 +24,50 @@ from openai import OpenAI
 from selenium import webdriver
 from selenium.common.exceptions import (NoSuchElementException,
                                         StaleElementReferenceException,
-                                        WebDriverException)
-from selenium.webdriver import ActionChains, Keys
+                                        TimeoutException, WebDriverException)
+from selenium.webdriver import Keys
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.virtual_authenticator import \
+    VirtualAuthenticatorOptions
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.wait import TimeoutException, WebDriverWait
+from selenium.webdriver.support.wait import WebDriverWait
 
 IGNORED = (NoSuchElementException, StaleElementReferenceException)
-DEBUG_DIR = os.environ.get("DEBUG_DIR", "-v ./debug:/debug -e DEBUG_DIR=/debug")
+DEBUG_DIR = os.environ.get("DEBUG_DIR") or "/data/debug"
+MAX_DUMPS = 10  # most recent failures kept in DEBUG_DIR
+
+OTC_OPTION = (
+    By.XPATH,
+    "//div[@data-value='PhoneAppOTP']"
+    " | //*[@role='button' or self::a][contains(., 'verification code')]",
+)
+OTC_INPUT = (
+    By.CSS_SELECTOR,
+    "#idTxtBx_SAOTCC_OTC, input[name='otc'], input[autocomplete='one-time-code']",
+)
+SWITCH_METHOD = (
+    By.XPATH,
+    "//*[@id='signInAnotherWay']"
+    " | //*[self::a or self::button or @role='button' or @role='link']"
+    "[contains(., 'another way') or contains(., 'Other ways') or contains(., \"can't use\")]",
+)
+KMSI_CHECKBOX = (By.ID, "KmsiCheckboxField")
+KMSI_YES = (By.ID, "idSIButton9")
+FIDO_BACK = (By.ID, "idBtn_Back")
+FIDO_GRACE = 3  # seconds on the passkey prompt before backing out
+BOARD_HOST = "see.etsmtl.ca"
+
+
+def first_visible(driver, locator):
+    """Return the first displayed element matching locator, or None."""
+    for element in driver.find_elements(*locator):
+        try:
+            if element.is_displayed():
+                return element
+        except StaleElementReferenceException:
+            continue
+    return None
 
 
 def dump_failure(driver, exc, step):
@@ -49,6 +86,9 @@ def dump_failure(driver, exc, step):
         driver.save_screenshot(os.path.join(DEBUG_DIR, f"refresh_fail_{stamp}.png"))
         with open(os.path.join(DEBUG_DIR, f"refresh_fail_{stamp}.html"), "w") as f:
             f.write(driver.page_source)
+        dumps = sorted(glob.glob(os.path.join(DEBUG_DIR, "refresh_fail_*")))
+        for old in dumps[: -MAX_DUMPS * 2]:
+            os.remove(old)
     except Exception as dump_exc:
         print("could not capture page state:", type(dump_exc).__name__, dump_exc)
 
@@ -68,6 +108,7 @@ options.add_argument("--no-sandbox")  # required in most containers
 options.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm issues
 options.add_argument("--disable-gpu")  # harmless on Linux/headless
 options.add_argument("--disable-software-rasterizer")
+options.add_argument("--window-size=1280,1024")
 options.add_argument("--incognito")
 options.add_argument("--lang=en_US")
 
@@ -76,8 +117,8 @@ options.add_argument("--lang=en_US")
 service = Service(executable_path="/usr/bin/chromedriver")
 
 
-ACCOUNT = os.environ.get("ACCOUNT", "ets")
-TOTP_SOCKET = os.environ.get("TOTP_SOCKET", "/run/totp/totp.sock")
+ACCOUNT = os.environ.get("ACCOUNT") or "ets"
+TOTP_SOCKET = os.environ.get("TOTP_SOCKET") or "/run/totp/totp.sock"
 
 
 def _run_totp_cmd(argv: list[str]) -> str:
@@ -170,14 +211,14 @@ URL = "https://see.etsmtl.ca/Postes/Rechercher"
 
 payload = {}
 headers = {"Cookie": os.environ["COOKIE"]}
-POSTES_PATH = os.environ.get("POSTES_PATH", "postes.csv")
+POSTES_PATH = os.environ.get("POSTES_PATH") or "postes.csv"
 
 COOKIE_REFRESHED = False
 COOKIE_INVALID_AT = 0.0
 COOKIE_LAST_REFRESH = 0.0
 COOKIE_LIFETIME = 5 * 3600  # 5 hours
 REFRESH_COOLDOWN = 60 * 2  # don't retry refresh more than once every 2 minutes
-MIN_INTERVAL = int(os.environ.get("DELAY", 60 * 10))  # default to 10 minutes
+MIN_INTERVAL = int(os.environ.get("DELAY") or 60 * 10)  # default to 10 minutes
 MAX_BACKOFF = 6
 
 
@@ -348,6 +389,54 @@ async def apply(guid: str):
     return "Please try again later"
 
 
+def complete_mfa(driver, timeout=90):
+    """Drive Microsoft's MFA screens until the browser is back on the job board."""
+    deadline = time.monotonic() + timeout
+    code_sent = False
+    fido_since = None
+    while time.monotonic() < deadline:
+        if urlparse(driver.current_url).hostname == BOARD_HOST:
+            time.sleep(1)
+            cookies = driver.get_cookies()
+            print("Board cookies:", ", ".join(c["name"] for c in cookies))
+            return "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+
+        try:
+            # Passkey prompt hangs in automation: leave it with the back arrow
+            if "/fido/" in driver.current_url:
+                fido_since = fido_since or time.monotonic()
+                back = first_visible(driver, FIDO_BACK)
+                if back and time.monotonic() - fido_since > FIDO_GRACE:
+                    back.click()
+                    fido_since = None
+                    time.sleep(1.5)
+                else:
+                    time.sleep(0.5)
+                continue
+            fido_since = None
+
+            field = first_visible(driver, OTC_INPUT)
+            if field and not code_sent:
+                field.send_keys(get_2fa_code(), Keys.ENTER)
+                code_sent = True
+            elif option := first_visible(driver, OTC_OPTION):
+                option.click()
+            elif first_visible(driver, KMSI_CHECKBOX) and (
+                yes := first_visible(driver, KMSI_YES)
+            ):
+                yes.click()
+            elif link := first_visible(driver, SWITCH_METHOD):
+                link.click()
+            else:
+                time.sleep(0.5)
+                continue
+        except WebDriverException:
+            pass
+        time.sleep(1.5)
+
+    raise TimeoutException("MFA did not complete")
+
+
 def refresh_cookie():
     """Refresh the COOKIE environment variable using Selenium to avoid CAPTCHAs."""
     print("Refreshing token")
@@ -356,6 +445,9 @@ def refresh_cookie():
     step = "start driver"
     try:
         driver = webdriver.Chrome(service=service, options=options)
+        driver.add_virtual_authenticator(
+            VirtualAuthenticatorOptions(is_user_consenting=False)
+        )
         wait = WebDriverWait(driver, timeout=20, ignored_exceptions=IGNORED)
 
         step = "open board"
@@ -373,34 +465,8 @@ def refresh_cookie():
         )
         password.send_keys(os.environ["PASSWORD"], Keys.ENTER)
 
-        step = "mfa page"
-        wait.until(
-            EC.any_of(
-                EC.visibility_of_element_located((By.ID, "linksDiv")),
-                EC.element_to_be_clickable(
-                    (By.PARTIAL_LINK_TEXT, "different verification")
-                ),
-            )
-        )
-        other = driver.find_elements(By.PARTIAL_LINK_TEXT, "different verification")
-        if other and other[0].is_displayed():
-            other[0].click()
-
-        step = "choose code method"
-        wait.until(EC.visibility_of_element_located((By.ID, "linksDiv")))
-        wait.until(
-            EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "verification code"))
-        ).click()
-
-        step = "enter code"
-        field = wait.until(EC.element_to_be_clickable((By.ID, "verificationCodeInput")))
-        field.send_keys(get_2fa_code(), Keys.ENTER)
-
-        step = "wait for cookie"
-        cookie = WebDriverWait(driver, timeout=60).until(
-            lambda d: d.get_cookie(".ASPXAUTH")
-        )
-        new_cookie = cookie["value"]
+        step = "mfa"
+        new_cookie = complete_mfa(driver)
 
     except Exception as exc:
         dump_failure(driver, exc, step)
@@ -411,9 +477,9 @@ def refresh_cookie():
         if driver:
             driver.quit()
 
-    os.environ["COOKIE"] = ".ASPXAUTH=" + new_cookie
-    headers["Cookie"] = os.environ["COOKIE"]
-    print(".ASPXAUTH=" + new_cookie)
+    os.environ["COOKIE"] = new_cookie
+    headers["Cookie"] = new_cookie
+    print("Cookie refreshed")
 
 
 def review(poste: dict):
@@ -446,7 +512,7 @@ def review(poste: dict):
                             "Here is the CV to remember for future job applications:\n\n"
                             + os.environ["CV_JSON"]
                             + "\n\n"
-                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE", "Any, the applicant has means to go anywhere for their internship")}"  # pylint: disable=line-too-long
+                            + f"Note that the applicant can only travel as far as these cities and their environs: {os.environ.get("RANGE") or "Any, the applicant has means to go anywhere for their internship"}"  # pylint: disable=line-too-long
                         ),
                     },
                     {
