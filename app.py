@@ -22,14 +22,16 @@ import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
 from selenium import webdriver
-from selenium.common.exceptions import (NoSuchElementException,
-                                        StaleElementReferenceException,
-                                        TimeoutException, WebDriverException)
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    StaleElementReferenceException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium.webdriver import Keys
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.virtual_authenticator import \
-    VirtualAuthenticatorOptions
+from selenium.webdriver.common.virtual_authenticator import VirtualAuthenticatorOptions
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
 
@@ -56,6 +58,7 @@ KMSI_CHECKBOX = (By.ID, "KmsiCheckboxField")
 KMSI_YES = (By.ID, "idSIButton9")
 FIDO_BACK = (By.ID, "idBtn_Back")
 FIDO_GRACE = 3  # seconds on the passkey prompt before backing out
+SKIP_REGISTRATION = {By.ID, "skipMfaRegistrationLink"}
 BOARD_HOST = "see.etsmtl.ca"
 
 
@@ -103,7 +106,7 @@ discord_client: discord.Client = discord.Client(intents=intents)
 
 options = webdriver.ChromeOptions()
 options.binary_location = "/usr/bin/chromium"  # Debian/Ubuntu chromium path
-options.add_argument("--headless=new")  # more reliable in recent Chrome
+# options.add_argument("--headless=new")  # more reliable in recent Chrome
 options.add_argument("--no-sandbox")  # required in most containers
 options.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm issues
 options.add_argument("--disable-gpu")  # harmless on Linux/headless
@@ -427,11 +430,15 @@ def complete_mfa(driver, timeout=90):
                 yes.click()
             elif link := first_visible(driver, SWITCH_METHOD):
                 link.click()
+            # Check how ot make it work
+            elif link := first_visible(driver, SKIP_REGISTRATION):
+                link.click()
             else:
                 time.sleep(0.5)
                 continue
         except WebDriverException:
             pass
+
         time.sleep(1.5)
 
     raise TimeoutException("MFA did not complete")
@@ -572,9 +579,9 @@ def review(poste: dict):
 
 
 if __name__ == "__main__":
-    discord_client.run(
-        os.environ["DISCORD_BOT_TOKEN"],
-        log_handler=None,
-    )
+    # discord_client.run(
+    #     os.environ["DISCORD_BOT_TOKEN"],
+    #     log_handler=None,
+    # )
     # fetch_postes()
-    # on_ready()
+    refresh_cookie()
