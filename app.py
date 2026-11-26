@@ -58,7 +58,12 @@ KMSI_CHECKBOX = (By.ID, "KmsiCheckboxField")
 KMSI_YES = (By.ID, "idSIButton9")
 FIDO_BACK = (By.ID, "idBtn_Back")
 FIDO_GRACE = 3  # seconds on the passkey prompt before backing out
-SKIP_REGISTRATION = {By.ID, "skipMfaRegistrationLink"}
+SKIP_REGISTRATION = (
+    By.XPATH,
+    "//*[@id='skipMfaRegistrationLink']"
+    " | //*[self::a or self::button or @role='button' or @role='link']"
+    "[contains(., 'Not now')]",
+)
 BOARD_HOST = "see.etsmtl.ca"
 
 
@@ -430,7 +435,7 @@ def complete_mfa(driver, timeout=90):
                 yes.click()
             elif link := first_visible(driver, SWITCH_METHOD):
                 link.click()
-            # Check how ot make it work
+            # Check how to make it work
             elif link := first_visible(driver, SKIP_REGISTRATION):
                 link.click()
             else:
