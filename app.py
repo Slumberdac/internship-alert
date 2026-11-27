@@ -111,7 +111,7 @@ discord_client: discord.Client = discord.Client(intents=intents)
 
 options = webdriver.ChromeOptions()
 options.binary_location = "/usr/bin/chromium"  # Debian/Ubuntu chromium path
-# options.add_argument("--headless=new")  # more reliable in recent Chrome
+options.add_argument("--headless=new")  # more reliable in recent Chrome
 options.add_argument("--no-sandbox")  # required in most containers
 options.add_argument("--disable-dev-shm-usage")  # avoid /dev/shm issues
 options.add_argument("--disable-gpu")  # harmless on Linux/headless
@@ -584,9 +584,9 @@ def review(poste: dict):
 
 
 if __name__ == "__main__":
-    # discord_client.run(
-    #     os.environ["DISCORD_BOT_TOKEN"],
-    #     log_handler=None,
-    # )
+    discord_client.run(
+        os.environ["DISCORD_BOT_TOKEN"],
+        log_handler=None,
+    )
     # fetch_postes()
-    refresh_cookie()
+    # refresh_cookie()
